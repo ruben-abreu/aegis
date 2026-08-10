@@ -1,16 +1,16 @@
-# Sentinel
+# Aegis
 
 A modular command-line security assessment toolkit built with Python.
 
-Sentinel is the flagship project of **Project Ascend**.
+Aegis is the flagship project of **Project Ascend**.
 
-The goal is to build a professional, modular security assessment toolkit while progressively learning Python, networking, software engineering, and artificial intelligence. Instead of creating many small practice projects, Sentinel evolves every week as I learn new concepts.
+The goal is to build a professional, modular security assessment toolkit while progressively learning Python, networking, software engineering, and artificial intelligence. Instead of creating many small practice projects, Aegis evolves every week as I learn new concepts.
 
 ---
 
 ## Vision
 
-Sentinel will allow a user to assess a domain or an IP address against a variety of security checks. Eventually, the application will support:
+Aegis will allow a user to assess a domain or an IP address against a variety of security checks. Eventually, the application will support:
 
 - **DNS Analysis**
 - **TLS / SSL Configuration & Certificate Inspection**
@@ -23,7 +23,7 @@ The project is inspired by common security assessment techniques and is designed
 
 ---
 
-## Current Features (v0.2.1)
+## Current Features (v0.7)
 
 - **Interactive CLI**: Menu-driven target selection interface with full user validation.
 - **Dynamic Routing**: Assessment sub-menu contextually tracks the selected asset.
@@ -94,15 +94,16 @@ The project is inspired by common security assessment techniques and is designed
 ## Project Structure
 
 ```text
-sentinel/
+aegis/
 │
 ├── main.py
 ├── .gitignore
 ├── README.md
 └── scanners/
     ├── dns.py
-    ├── tls.py
-    ├── headers.py
+    ├── tls_certs.py
+    ├── tls_config.py
+    ├── was.py
     ├── ports.py
     └── email.py
 ```

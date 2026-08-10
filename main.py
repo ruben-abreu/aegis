@@ -12,8 +12,8 @@ import ipaddress
 
 def display_banner():
     print("========================================")
-    print("                SENTINEL         ")
-    print("                 v0.6.1 ")
+    print("                AEGIS            ")
+    print("                 v0.7 ")
     print("========================================")
 
 def parse_port(port_str):
@@ -143,8 +143,8 @@ def sub_menu(target_value, target_type, target_port):
     while True:
         port_display = f":{current_port}" if current_port else ""
         print("--- Assessment Menu ---")
-        print("1. SSL Configurations - WiP")
-        print("2. SSL Certificates - WiP")
+        print("1. SSL Certificates - WiP")
+        print("2. SSL Configurations")
         print("3. Web Application Security")
         print("4. Open Ports - WiP")
         print("5. SPF / DKIM / DMARC")
@@ -202,7 +202,7 @@ def sub_menu(target_value, target_type, target_port):
         print("Scan execution finished.")
         print("1. Run another tool on CURRENT target")
         print("2. Scan a NEW Domain / IP")
-        print("q. Quit Sentinel")
+        print("q. Quit Aegis")
         print("=" * 40)
 
         after_action = input("What would you like to do? ").strip().lower()

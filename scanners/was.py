@@ -29,7 +29,7 @@ def fetch(url):
             allow_redirects=True,
             verify=False,
             headers={
-                "User-Agent": "Sentinel/0.5"
+                "User-Agent": "Aegis/0.7"
             },
         )
     except requests.exceptions.RequestException as e:
@@ -128,7 +128,7 @@ def check_https_redirect(target, port):
             timeout=10,
             allow_redirects=False,
             verify=False,
-            headers={"User-Agent": "Sentinel/0.5"},
+            headers={"User-Agent": "Aegis/0.7"},
         )
 
         location = response.headers.get("Location", "")
@@ -164,7 +164,7 @@ def check_https_downgrade(target, port):
             allow_redirects=False,
             verify=False,
             timeout=10,
-            headers={"User-Agent": "Sentinel/0.5"},
+            headers={"User-Agent": "Aegis/0.7"},
         )
 
         location = r.headers.get("Location", "")
