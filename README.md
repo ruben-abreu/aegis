@@ -2,8 +2,6 @@
 
 A modular command-line security assessment toolkit built with Python.
 
-Aegis is the flagship project of **Project Ascend**.
-
 The goal is to build a professional, modular security assessment toolkit while progressively learning Python, networking, software engineering, and artificial intelligence. Instead of creating many small practice projects, Aegis evolves every week as I learn new concepts.
 
 ---
@@ -49,23 +47,23 @@ The project is inspired by common security assessment techniques and is designed
 
 ### Phase 3 — HTTP Analysis
 
-- [ ] HTTP requests
-- [ ] Response headers
-- [ ] Redirect detection
-- [ ] Security header analysis
+- [x] HTTP requests
+- [x] Response headers
+- [x] Redirect detection
+- [x] Security header analysis
 
 ### Phase 4 — TLS / SSL
 
-- [ ] Certificate inspection
-- [ ] Expiration checks
-- [ ] Supported TLS versions
-- [ ] Cipher suite analysis
+- [x] Certificate inspection
+- [x] Expiration checks
+- [x] Supported TLS versions
+- [x] Cipher suite analysis
 
 ### Phase 5 — Port Scanning
 
-- [ ] TCP port scanning
-- [ ] Banner grabbing
-- [ ] Service identification
+- [x] TCP port scanning
+- [x] Banner grabbing
+- [x] Service identification
 
 ### Phase 6 — Reporting
 
