@@ -72,6 +72,23 @@ def init_db():
     conn.commit()
     conn.close()
 
+def reconcile_interrupted_scans():
+    """Close out scans orphaned by a crash or Ctrl+C.
+
+    A scan's progress lives in the worker thread, so anything still marked
+    'running' at startup died with the previous process and would otherwise
+    sit as 'running' forever.
+    """
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("UPDATE scans SET status = 'interrupted' WHERE status = 'running'")
+    reconciled = c.rowcount
+    conn.commit()
+    conn.close()
+
+    if reconciled:
+        print(f"  Marked {reconciled} interrupted scan(s) from a previous run")
+
 @app.context_processor
 def inject_footer_vars():
     return {'current_year': datetime.now().year}
@@ -220,23 +237,49 @@ def get_scan_status(scan_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+HISTORY_LIMIT = 50
+
 @app.route('/api/scans')
 def get_scans():
+    """Recent scans plus the true stored total.
+
+    Nothing is auto-deleted, so the total can exceed what is returned here;
+    reporting it keeps the UI honest about hidden history.
+    """
     try:
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
-        c.execute('SELECT id, target, scanner, timestamp, status FROM scans ORDER BY id DESC LIMIT 50')
-        scans = []
-        for row in c.fetchall():
-            scans.append({
+        c.execute(
+            'SELECT id, target, scanner, timestamp, status FROM scans '
+            'ORDER BY id DESC LIMIT ?', (HISTORY_LIMIT,)
+        )
+        scans = [
+            {
                 'id': row[0],
                 'target': row[1],
                 'scanner': row[2],
                 'timestamp': row[3],
-                'status': row[4]
-            })
+                'status': row[4],
+            }
+            for row in c.fetchall()
+        ]
+        total = c.execute('SELECT COUNT(*) FROM scans').fetchone()[0]
         conn.close()
-        return jsonify(scans)
+        return jsonify({'scans': scans, 'total': total})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/scans', methods=['DELETE'])
+def clear_scans():
+    """Wipe the whole local history. Deliberate, never automatic."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        deleted = c.execute('DELETE FROM scans').rowcount
+        conn.commit()
+        conn.close()
+        active_scans.clear()
+        return jsonify({'status': 'cleared', 'deleted': deleted})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -398,6 +441,7 @@ def delete_scan(scan_id):
 
 if __name__ == '__main__':
     init_db()
+    reconcile_interrupted_scans()
     # Port 5000 is taken by AirPlay Receiver on macOS, which answers 403.
     # Override with: AEGIS_PORT=8080 python app.py
     port = int(os.environ.get('AEGIS_PORT', 5050))

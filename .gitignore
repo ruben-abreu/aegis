@@ -13,3 +13,6 @@ __pycache__/
 venv/
 env/
 .env
+
+# Local scan history - contains every target the machine has scanned
+aegis_results.db

@@ -284,6 +284,44 @@ input:focus, select:focus {
     color: #721c24;
 }
 
+.status.interrupted {
+    background: #e2e3e5;
+    color: #41464b;
+}
+
+.history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 20px;
+    border-bottom: 2px solid var(--border-color);
+    padding-bottom: 10px;
+}
+
+.history-header h2 {
+    margin-bottom: 0;
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.history-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.history-count {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.history-actions .btn-danger {
+    width: auto;
+}
+
 .loading {
     color: var(--text-secondary);
     text-align: center;

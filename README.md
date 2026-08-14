@@ -147,7 +147,7 @@ commented out in `run()`. Uncomment them if you want them.
 
 ## Planned
 
-- CSV and HTML reports
+- General Improvements
 - AI-generated summaries and remediation guidance
 
 ## License
