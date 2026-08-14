@@ -29,17 +29,22 @@ body.dark-mode {
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     background: var(--bg-primary);
-    min-height: 100vh;
+    height: 100vh;
+    overflow: hidden;
     padding: 20px;
     transition: background 0.3s ease;
 }
 
+/* App shell: the container is exactly the viewport and the results output
+   absorbs whatever height is left, so the page itself never needs scrolling
+   or zooming out. min-height:0 on the flex chain is what allows the inner
+   scroller to shrink instead of pushing the page taller. */
 .container {
     max-width: 1200px;
     margin: 0 auto;
     display: flex;
     flex-direction: column;
-    min-height: 100vh;
+    height: 100%;
 }
 
 header {
@@ -86,10 +91,46 @@ header p {
 
 main {
     flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 20px;
-    margin-bottom: 40px;
+    margin-bottom: 20px;
+}
+
+/* Results grow to fill the leftover space; the other panels keep their size. */
+.scan-panel,
+.history-panel {
+    flex: 0 0 auto;
+}
+
+.results-panel {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Kept next to the panel and ahead of the media queries, so the responsive
+   rules further down can override it. */
+.results-output {
+    background: var(--results-bg);
+    color: var(--results-text);
+    padding: 20px;
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+    line-height: 1.6;
+    /* basis 0 so it claims no content height of its own and simply takes what
+       the panel has left; it scrolls internally instead. */
+    flex: 1 1 0;
+    min-height: 120px;
+    overflow-y: auto;
+    /* pre-wrap belongs on the output lines, not here: on the container it also
+       renders the injected markup's own indentation as blank space. */
+    word-wrap: break-word;
+    transition: background 0.3s ease, color 0.3s ease;
 }
 
 .full-width {
@@ -145,6 +186,9 @@ label {
 
 input, select {
     width: 100%;
+    /* Explicit height: input and select have different intrinsic heights, which
+       leaves them a pixel or more out of line when placed side by side. */
+    height: 42px;
     padding: 10px 12px;
     border: 1px solid var(--border-color);
     border-radius: 4px;
@@ -202,25 +246,20 @@ input:focus, select:focus {
     background: #ff3838;
 }
 
-.scan-panel, .results-panel {
-    min-height: auto;
-}
-
+/* Panels size to their content. The scrollable regions inside them are
+   capped relative to the viewport, so a short screen shrinks them instead of
+   growing the page and forcing the user to zoom out. */
+.scan-panel,
+.results-panel,
 .history-panel {
-    min-height: 500px;
-}
-
-.results-panel {
-    min-height: 500px;
-    max-height: 70vh;
-    flex: 1;
+    min-height: auto;
 }
 
 #scansList {
     display: flex;
     flex-direction: column;
     gap: 10px;
-    max-height: 600px;
+    max-height: clamp(160px, 34vh, 600px);
     overflow-y: auto;
 }
 
@@ -406,6 +445,32 @@ footer {
 }
 
 @media (max-width: 768px) {
+    /* Too narrow to fit everything on one screen, so drop the app shell and let
+       the page scroll normally instead of clipping. */
+    body {
+        height: auto;
+        min-height: 100vh;
+        overflow: visible;
+    }
+
+    .container {
+        height: auto;
+        min-height: calc(100vh - 40px);
+    }
+
+    /* No leftover height to absorb here: give the output a real height and let
+       the page scroll, rather than squeezing it to its minimum. */
+    .results-panel {
+        overflow: visible;
+        flex: 0 0 auto;
+    }
+
+    .results-output {
+        flex: 0 0 auto;
+        height: 60vh;
+        max-height: none;
+    }
+
     .top-row {
         grid-template-columns: 1fr;
     }
@@ -429,6 +494,123 @@ footer {
     }
 }
 
+/* On any usable width the form and history share the top row and the results
+   take the full width below, filling the leftover height. Stacking all three
+   needs ~1280px of viewport height before the results get a usable size, which
+   almost no screen has. */
+@media (min-width: 769px) {
+    main {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: auto minmax(0, 1fr);
+        grid-template-areas:
+            "form    history"
+            "results results";
+    }
+
+    .scan-panel {
+        grid-area: form;
+    }
+
+    .results-panel {
+        grid-area: results;
+    }
+
+    .history-panel {
+        grid-area: history;
+    }
+}
+
+/* Covers every laptop and most external monitors. Set high deliberately: with a
+   lower cut-off, a taller screen fell back to roomy spacing and ended up with a
+   SMALLER results area than a shorter one. */
+@media (max-height: 1200px) {
+    body {
+        padding: 12px;
+    }
+
+    .container {
+        min-height: calc(100vh - 24px);
+    }
+
+    main {
+        gap: 12px;
+        margin-bottom: 12px;
+    }
+
+    .panel {
+        padding: 16px 20px;
+    }
+
+    .panel h2 {
+        font-size: 1.2em;
+        margin-bottom: 12px;
+        padding-bottom: 8px;
+    }
+
+    header {
+        margin-bottom: 14px;
+    }
+
+    header h1 {
+        font-size: 1.7em;
+    }
+
+    footer {
+        padding-top: 10px;
+    }
+
+    .footer-legal {
+        margin-top: 2px;
+    }
+
+    .form-group {
+        margin-bottom: 10px;
+    }
+
+    /* Target and scanner sit side by side to save a whole row. */
+    .scan-panel form {
+        display: grid;
+        grid-template-columns: 2fr 1fr auto;
+        gap: 12px;
+        align-items: end;
+        /* room for the format hint, which is lifted out of the flow below */
+        padding-bottom: 20px;
+    }
+
+    .scan-panel .form-group {
+        margin-bottom: 0;
+        position: relative;
+    }
+
+    /* Out of flow, so the Target group is the same height as the Scanner group
+       and align-items:end lines up the field, the dropdown and the button. */
+    .scan-panel .form-group small {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        margin-top: 4px !important;
+        white-space: nowrap;
+    }
+
+    .scan-panel .btn-primary {
+        margin-top: 0;
+        white-space: nowrap;
+    }
+
+    #scansList {
+        max-height: clamp(96px, 17vh, 260px);
+    }
+
+    .scan-item {
+        padding: 10px 12px;
+    }
+
+    .scan-item-info h3 {
+        font-size: 0.95em;
+    }
+}
+
 .toast {
     position: fixed;
     bottom: 20px;
@@ -448,21 +630,6 @@ footer {
 
 .toast.error {
     background: #dc3545;
-}
-
-.results-output {
-    background: var(--results-bg);
-    color: var(--results-text);
-    padding: 20px;
-    border-radius: 4px;
-    font-family: 'Courier New', monospace;
-    font-size: 0.9em;
-    line-height: 1.6;
-    max-height: 600px;
-    overflow-y: auto;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    transition: background 0.3s ease, color 0.3s ease;
 }
 
 .results-header {
@@ -501,6 +668,7 @@ footer {
 
 .output-line {
     margin: 3px 0;
+    white-space: pre-wrap;
 }
 
 .output-success {
