@@ -1,107 +1,157 @@
 # Aegis
 
-A modular command-line security assessment toolkit built with Python.
+A modular security assessment toolkit for domains and IP addresses, written in Python.
+Runs either as an interactive CLI or as a local web app.
 
-The goal is to build a professional, modular security assessment toolkit while progressively learning Python, networking, software engineering, and artificial intelligence. Instead of creating many small practice projects, Aegis evolves every week as I learn new concepts.
+Aegis inspects a target against the same risk vectors used in security ratings —
+web application security, TLS configuration, certificates, open ports and email
+authentication — and reports what would count against it, with the reasoning for
+each finding.
 
----
+This started as a learning project and still is one: rather than a pile of small
+throwaway scripts, it grows a bit every week as I pick up new ground in Python,
+networking and security. It is not a replacement for a commercial scanner.
 
-## Vision
+## What it checks
 
-Aegis will allow a user to assess a domain or an IP address against a variety of security checks. Eventually, the application will support:
+**Web Application Security**
+Security headers (CSP, HSTS, X-Frame-Options, X-Content-Type-Options,
+Referrer-Policy, Permissions-Policy), CSP weaknesses such as `unsafe-inline`,
+CORS wildcards with credentials, HTTPS-to-HTTP downgrades, mixed content,
+Subresource Integrity on external scripts, dated JavaScript libraries, and the
+full redirect chain.
 
-- **DNS Analysis**
-- **TLS / SSL Configuration & Certificate Inspection**
-- **Open Port Detection**
-- **HTTP Security Headers & Web Technology Detection**
-- **Email Security** (SPF, DKIM, DMARC)
-- **AI-powered Security Summaries**
+**SSL/TLS Configuration**
+Which protocol versions the server actually negotiates — TLS 1.0, 1.1 and SSLv3
+are flagged as violations — plus cipher strength, forward secrecy,
+Diffie-Hellman key size, certificate/hostname mismatch, HSTS (with `max-age`,
+`includeSubDomains` and `preload`), TLS compression (CRIME), session resumption
+and secure renegotiation.
 
-The project is inspired by common security assessment techniques and is designed as a learning platform rather than a commercial security scanner.
+**SSL/TLS Certificates**
+Validity window and time to expiry, key strength (RSA and ECDSA), signature
+algorithm (SHA-1 is a violation), self-signed detection, wildcard usage,
+SAN and CN hostname matching, Key Usage and Extended Key Usage.
 
----
+**Open Ports**
+Checks a single specified port over TCP or UDP and names the service behind it.
+Ports that are conventionally UDP — 53, 123, 161, 162 and others — switch to UDP
+automatically, and you can force either with `161/udp` or `161/tcp`.
 
-## Current Features (v0.7)
+**Email Security**
+SPF (qualifier strength, the 10-lookup limit, deprecated `ptr`), DMARC (policy,
+`pct`, `rua` reporting) and DKIM (key length, SHA-1 restriction), discovered
+through common selectors or one you supply.
 
-- **Interactive CLI**: Menu-driven target selection interface with full user validation.
-- **Dynamic Routing**: Assessment sub-menu contextually tracks the selected asset.
-- **Modular Package Architecture**: Core scanner engines completely decoupled into a standalone `scanners` package using package-level imports.
-- **Global Termination Execution**: Quick system-level exit capability safely embedded directly within the deep loop framework.
+**DNS Analysis** — CLI only
+A-record lookup for domains. For IP targets it builds a passive DNS graph from
+VirusTotal and filters out ISP and dynamic-hostname noise. Requires an API key.
 
----
+## Requirements
 
-## Roadmap
+- Python 3.9 or newer
+- [`sslscan`](https://github.com/rbsec/sslscan) — needed by the SSL/TLS
+  Configuration checks, since Python's `ssl` module refuses to negotiate the
+  deprecated protocol versions we specifically want to detect
 
-### Phase 1 — Python Foundations
+## Setup
 
-- [x] Interactive CLI
-- [x] Target selection
-- [x] Assessment menu
-- [x] Project package refactoring
+```bash
+pip install -r requirements.txt
+brew install sslscan          # macOS; apt install sslscan on Debian/Ubuntu
+```
 
-### Phase 2 — Networking
+The passive DNS graph needs a VirusTotal API key. It is optional — everything
+else works without it:
 
-- [x] DNS resolution
-- [x] IP lookup
-- [x] Reverse DNS
+```bash
+echo "VT_API_KEY=your_api_key" > .env
+```
 
-### Phase 3 — HTTP Analysis
+## Running
 
-- [x] HTTP requests
-- [x] Response headers
-- [x] Redirect detection
-- [x] Security header analysis
+Web interface:
 
-### Phase 4 — TLS / SSL
+```bash
+python app.py
+```
 
-- [x] Certificate inspection
-- [x] Expiration checks
-- [x] Supported TLS versions
-- [x] Cipher suite analysis
+Then open <http://127.0.0.1:5050>.
 
-### Phase 5 — Port Scanning
+Port 5050 is deliberate. On macOS, port 5000 belongs to the AirPlay Receiver,
+which binds every interface and answers HTTP requests with `403 Forbidden` —
+easy to mistake for a bug in the app. Override with `AEGIS_PORT=8080 python app.py`.
 
-- [x] TCP port scanning
-- [x] Banner grabbing
-- [x] Service identification
+CLI:
 
-### Phase 6 — Reporting
+```bash
+python main.py
+```
 
-- [ ] JSON export
-- [ ] CSV export
-- [ ] HTML report generation
+Targets accept an optional port in either interface: `example.com`,
+`example.com:8443`, `1.2.3.4`, `1.2.3.4:161/udp`. Only public IPs are allowed.
 
-### Phase 7 — Artificial Intelligence
+## Exports
 
-- [ ] AI-generated security summaries
-- [ ] Suggested remediation guidance
-- [ ] Executive report generation
+Scan results can be exported for sharing from the results panel:
 
----
+- **TXT** — a short header (risk vector, target, timestamp) followed by the raw
+  scanner output, unchanged.
+- **JSON** — the same raw output, plus a `findings[]` array giving each result a
+  section and a severity (`pass`, `fail`, `warning`, `info`, `detail`), and a
+  severity count. Finding text is never reworded.
 
-## Technologies
+Both are also reachable directly:
 
-- **Python**
-- **Git**
-- **GitHub**
+```
+/api/export/<scan_id>?format=txt
+/api/export/<scan_id>?format=json
+```
 
-> _Note: Additional libraries and packages will be introduced as the functional scanner mechanics drop into place._
-
----
-
-## Project Structure
+## Project layout
 
 ```text
 aegis/
-│
-├── main.py
-├── .gitignore
-├── README.md
+├── main.py              # interactive CLI
+├── app.py               # Flask web app
+├── requirements.txt
+├── aegis_results.db     # scan history, created on first run
+├── templates/
+│   └── index.html
+├── static/
+│   ├── style.css
+│   └── app.js
 └── scanners/
-    ├── dns.py
-    ├── tls_certs.py
-    ├── tls_config.py
-    ├── was.py
-    ├── ports.py
-    └── email.py
+    ├── was.py           # web application security
+    ├── tls_config.py    # protocol versions, ciphers, DH, HSTS
+    ├── tls_certs.py     # certificate inspection
+    ├── ports.py         # TCP/UDP port check
+    ├── email.py         # SPF / DKIM / DMARC
+    └── dns.py           # DNS records, passive DNS graph
 ```
+
+## Notes and limitations
+
+Each person runs their own instance. Results are written to a local SQLite file
+and never leave the machine.
+
+There is no authentication, and the server binds to `127.0.0.1` on purpose. Do
+not expose it on `0.0.0.0` or to a network as it stands.
+
+`tls_config.py` shells out to `sslscan` once per check, so slow targets can time
+out and report a false failure. Caching a single run is on the list.
+
+Several `was.py` checks — HTTP methods, directory listing, server banner
+disclosure, form action inspection, technology fingerprinting — are written but
+commented out in `run()`. Uncomment them if you want them.
+
+## Planned
+
+- CSV and HTML reports
+- AI-generated summaries and remediation guidance
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+
+© 2026 Ruben Abreu

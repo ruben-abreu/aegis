@@ -30,11 +30,25 @@ def get_certificate(host, port=443):
         print(f"{RED}[!] Unable to retrieve certificate: {e}{END}")
         return None, None
 
+def cert_validity_dates(cert):
+    """Returns (not_before, not_after) as timezone-aware UTC datetimes.
+
+    The *_utc properties only exist on cryptography >= 42; older versions
+    return naive datetimes from the non-suffixed properties.
+    """
+    not_before = getattr(cert, "not_valid_before_utc", None)
+    not_after = getattr(cert, "not_valid_after_utc", None)
+
+    if not_before is None or not_after is None:
+        not_before = cert.not_valid_before.replace(tzinfo=timezone.utc)
+        not_after = cert.not_valid_after.replace(tzinfo=timezone.utc)
+
+    return not_before, not_after
+
 def check_validity(cert):
     print("\n[*] Certificate Validity")
 
-    not_before = cert.not_valid_before_utc
-    not_after = cert.not_valid_after_utc
+    not_before, not_after = cert_validity_dates(cert)
     now = datetime.now(timezone.utc)
 
     if now < not_before:

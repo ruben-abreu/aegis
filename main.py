@@ -13,7 +13,7 @@ import ipaddress
 def display_banner():
     print("========================================")
     print("                AEGIS            ")
-    print("                 v0.9 ")
+    print("                 v1.0 ")
     print("========================================")
 
 def parse_port(port_str):
@@ -146,7 +146,7 @@ def sub_menu(target_value, target_type, target_port):
         print("1. SSL Certificates")
         print("2. SSL Configurations")
         print("3. Web Application Security")
-        print("4. Open Ports - WiP")
+        print("4. Open Ports")
         print("5. SPF / DKIM / DMARC")
         print("6. Graph PDNS")
         print("0. Change Target (New Domain/IP)")

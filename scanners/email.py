@@ -149,7 +149,7 @@ def validate_dkim_content(record_text, selector_name):
     return True
 
 
-def check_dkim(domain):
+def check_dkim(domain, custom_selector=None, interactive=True):
     print("\n[*] Checking DKIM Record against BitSight Criteria...")
     common_selectors = ['default', 'google', 'k1', 'mail', 'sig1']
     found_any = False
@@ -168,9 +168,10 @@ def check_dkim(domain):
         except Exception:
             continue
             
-    print("\n    --- Manual DKIM Check ---")
-    custom_selector = input("    Have a specific DKIM selector to check? (Leave empty to skip): ").strip()
-    
+    if interactive and not custom_selector:
+        print("\n    --- Manual DKIM Check ---")
+        custom_selector = input("    Have a specific DKIM selector to check? (Leave empty to skip): ").strip()
+
     if custom_selector:
         dkim_domain = f"{custom_selector}._domainkey.{domain}"
         print(f"    [*] Querying record for selector: '{custom_selector}'...")
@@ -193,7 +194,7 @@ def check_dkim(domain):
         print("    \033[93m[!] DKIM Note: No active records discovered using standard common selectors.\033[0m")
 
 
-def run(target, target_type=None, port=None):
+def run(target, target_type=None, port=None, dkim_selector=None, interactive=True):
     if target_type == "IP Address":
         print("\n[!] Email security auditing (SPF/DKIM/DMARC) requires a Domain target, not an IP address.")
         return
@@ -202,7 +203,7 @@ def run(target, target_type=None, port=None):
     print(" E-MAIL SECURITY & BITSIGHT COMPLIANCE")
     print(f" Target: {target}")
     print("========================================")
-    
+
     check_spf(target)
     check_dmarc(target)
-    check_dkim(target)
+    check_dkim(target, custom_selector=dkim_selector, interactive=interactive)
