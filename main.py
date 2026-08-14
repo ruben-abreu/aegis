@@ -13,7 +13,7 @@ import ipaddress
 def display_banner():
     print("========================================")
     print("                AEGIS            ")
-    print("                 v0.8 ")
+    print("                 v0.9 ")
     print("========================================")
 
 def parse_port(port_str):
@@ -149,7 +149,6 @@ def sub_menu(target_value, target_type, target_port):
         print("4. Open Ports - WiP")
         print("5. SPF / DKIM / DMARC")
         print("6. Graph PDNS")
-        print("7. Full Scan - WiP")
         print("0. Change Target (New Domain/IP)")
         print("q. Quit")
 
@@ -176,16 +175,6 @@ def sub_menu(target_value, target_type, target_port):
 
         elif choice == "6":
             dns.run(target_value, target_type)
-
-        elif choice == "7":
-            print("\n[*] Launching Full Suite Assessment...")
-            port_to_use = current_port or prompt_for_port(default_port=443)
-            dns.run(target_value, target_type)
-            tls_certs.run(target_value, port=port_to_use)
-            tls_config.run(target_value, port=port_to_use)
-            was.run(target_value, port=port_to_use)
-            ports.run(target_value, port=port_to_use)
-            email.run(target_value, target_type)
 
         elif choice == "0":
             break

@@ -296,6 +296,97 @@ def check_protocol_downgrade_protection(host, port=443):
         warn(f"Unable to check protocol version: {e}")
         return False
 
+def check_certificate_match(host, port=443):
+    print("\n[*] Certificate Domain Mismatch")
+
+    try:
+        result = subprocess.run(
+            ["sslscan", host] if port == 443 else ["sslscan", "--port", str(port), host],
+            capture_output=True,
+            timeout=30,
+            text=True
+        )
+
+        output = result.stdout + result.stderr
+
+        subject_match = False
+        altname_match = False
+        subject = None
+        altnames = []
+
+        for line in output.split("\n"):
+            if "Subject:" in line:
+                subject = line.split("Subject:")[1].strip()
+            if "Altnames:" in line or "DNS:" in line:
+                altnames_str = line.split("Altnames:")[1].strip() if "Altnames:" in line else line.split("DNS:")[1].strip()
+                altnames = [name.strip() for name in altnames_str.split(",")]
+
+        if subject and host.lower() in subject.lower():
+            subject_match = True
+            ok(f"Certificate Subject matches: {subject}")
+
+        if altnames:
+            for altname in altnames:
+                if host.lower() in altname.lower().replace("dns:", ""):
+                    altname_match = True
+                    ok(f"Certificate SAN matches: {', '.join(altnames)}")
+                    break
+
+        if not subject_match and not altname_match:
+            bad(f"Certificate mismatch! Subject: {subject}, SANs: {altnames}")
+            return False
+
+        return True
+
+    except Exception as e:
+        warn(f"Unable to check certificate match: {e}")
+        return False
+
+def check_dh_strength(host, port=443):
+    print("\n[*] Diffie-Hellman (DH) Key Strength")
+
+    try:
+        result = subprocess.run(
+            ["sslscan", host] if port == 443 else ["sslscan", "--port", str(port), host],
+            capture_output=True,
+            timeout=30,
+            text=True
+        )
+
+        output = result.stdout + result.stderr
+
+        dh_found = False
+        weak_dh = False
+
+        for line in output.split("\n"):
+            if "DHE" in line or "DH" in line.upper():
+                dh_found = True
+                if "DHE 1024" in line or "DH 512" in line or "DH 1024" in line:
+                    bad(f"Weak DH detected: {line.strip()}")
+                    weak_dh = True
+                elif "DHE 2048" in line or "DH 2048" in line:
+                    ok(f"Acceptable DH: {line.strip()}")
+                elif "DHE 4096" in line or "DH 4096" in line or "DHE" in line:
+                    ok(f"Strong DH: {line.strip()}")
+
+            if "Server Key Exchange" in line or "secp" in line or "P-256" in line:
+                if "secp256r1" in line or "P-256" in line:
+                    ok("Using ECDHE (elliptic curve) - strong key exchange")
+
+        if weak_dh:
+            bad("CRITICAL: Weak DH vulnerable to LOGJAM attack")
+            return False
+        elif dh_found:
+            ok("DH key strength is acceptable")
+            return True
+        else:
+            warn("Could not determine DH strength")
+            return False
+
+    except Exception as e:
+        warn(f"Unable to check DH strength: {e}")
+        return False
+
 def run(target, target_type=None, port=443):
     print("=" * 40)
     print(" TLS/SSL CONFIGURATION")
@@ -313,6 +404,8 @@ def run(target, target_type=None, port=443):
 
     check_tls_versions(target, port)
     check_cipher_suites(target, port)
+    check_certificate_match(target, port)
+    check_dh_strength(target, port)
     check_forward_secrecy(target, port)
     check_hsts_header(target, port)
     check_ssl_compression(target, port)
