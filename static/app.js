@@ -1,6 +1,9 @@
 let scanners = {};
-let currentScanId = null;
+let currentScanId = null; // scan shown in the results pane
+let activeScanId = null; // scan still running, followed until it finishes
 let pollInterval = null;
+
+const SCAN_POLL_MS = 500;
 
 document.addEventListener('DOMContentLoaded', () => {
   initDarkMode();
@@ -8,8 +11,28 @@ document.addEventListener('DOMContentLoaded', () => {
   loadScans();
   setupFormHandler();
   setupModalHandler();
-  setInterval(loadScans, 3000);
+  setupVisibilityHandler();
 });
+
+// Only this browser changes this instance's data, so the history is refreshed
+// on the events that change it rather than on a permanent timer. A scan in
+// flight is the one thing that changes on its own, and that is polled only
+// while the tab is actually being looked at.
+function setupVisibilityHandler() {
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopScanPolling();
+      return;
+    }
+    loadScans();
+    if (activeScanId) startPolling(activeScanId);
+  });
+}
+
+function stopScanPolling() {
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = null;
+}
 
 function toggleDarkMode() {
   const isDark = document.body.classList.toggle('dark-mode');
@@ -131,6 +154,13 @@ async function loadScans() {
     if (!currentScanId) {
       viewScan(scans[0].id);
     }
+
+    // A scan left running by a page reload should keep streaming.
+    const running = allScans.find(s => s.status === 'running');
+    if (running && !pollInterval && !document.hidden) {
+      activeScanId = running.id;
+      startPolling(running.id);
+    }
   } catch (error) {
     console.error('Error loading scans:', error);
   }
@@ -154,7 +184,8 @@ async function clearHistory() {
     }
     const { deleted } = await response.json();
     currentScanId = null;
-    if (pollInterval) clearInterval(pollInterval);
+    activeScanId = null;
+    stopScanPolling();
     document.getElementById('resultsDisplay').innerHTML =
       '<p class="loading">Run a scan to see results</p>';
     showToast(`Deleted ${deleted} scan(s)`, 'success');
@@ -215,40 +246,47 @@ function setupFormHandler() {
 }
 
 function startPolling(scanId) {
-  if (pollInterval) clearInterval(pollInterval);
+  stopScanPolling();
+  activeScanId = scanId;
 
   pollInterval = setInterval(async () => {
     try {
       const response = await fetch(`/api/scan-status/${scanId}`);
       const data = await response.json();
 
-      const resultsDisplay = document.getElementById('resultsDisplay');
-      const colorizedOutput = colorizeOutput(data.output);
-
-      resultsDisplay.innerHTML = `
+      // Keep following in the background if the user clicked another scan,
+      // so its status chip still updates when it finishes.
+      if (currentScanId === scanId) {
+        const resultsDisplay = document.getElementById('resultsDisplay');
+        resultsDisplay.innerHTML = `
                 <div style="margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 10px; color: #9cdcfe;">
                     <strong>Status:</strong> ${data.status === 'running' ? '⏳ Running...' : '✓ Completed'}
                 </div>
-                <div>${colorizedOutput}</div>
+                <div>${colorizeOutput(data.output)}</div>
             `;
 
-      resultsDisplay.parentElement.scrollTop =
-        resultsDisplay.parentElement.scrollHeight;
+        resultsDisplay.parentElement.scrollTop =
+          resultsDisplay.parentElement.scrollHeight;
+      }
 
       if (data.status !== 'running') {
-        clearInterval(pollInterval);
+        stopScanPolling();
+        activeScanId = null;
         loadScans();
+        if (currentScanId === scanId) viewScan(scanId);
       }
     } catch (error) {
       console.error('Error polling scan:', error);
     }
-  }, 500);
+  }, SCAN_POLL_MS);
 }
 
 async function viewScan(scanId) {
   try {
     currentScanId = scanId;
-    if (pollInterval) clearInterval(pollInterval);
+
+    // A scan still in flight keeps its live view; startPolling paints it.
+    if (scanId === activeScanId) return;
 
     const response = await fetch(`/api/scan/${scanId}`);
     const scan = await response.json();
@@ -297,6 +335,10 @@ async function deleteScan(event, scanId) {
 
     if (response.ok) {
       showToast('Scan deleted', 'success');
+      if (activeScanId === scanId) {
+        stopScanPolling();
+        activeScanId = null;
+      }
       if (currentScanId === scanId) {
         document.getElementById('resultsDisplay').innerHTML =
           '<p class="loading">Run a scan to see results</p>';

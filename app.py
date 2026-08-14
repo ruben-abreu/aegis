@@ -442,8 +442,20 @@ def delete_scan(scan_id):
 if __name__ == '__main__':
     init_db()
     reconcile_interrupted_scans()
+
     # Port 5000 is taken by AirPlay Receiver on macOS, which answers 403.
     # Override with: AEGIS_PORT=8080 python app.py
     port = int(os.environ.get('AEGIS_PORT', 5050))
-    print(f"\n  Aegis running at http://127.0.0.1:{port}\n")
-    app.run(debug=True, host='127.0.0.1', port=port, threaded=True)
+
+    # Debug adds a file-watching reloader process that costs ~10x the idle CPU
+    # of a plain run, and is only useful while editing the code.
+    debug = os.environ.get('AEGIS_DEBUG', '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+    print(f"\n  Aegis running at http://127.0.0.1:{port}")
+    if debug:
+        print("  Debug mode: auto-reload on code changes")
+    else:
+        print("  Set AEGIS_DEBUG=1 for auto-reload while developing")
+    print()
+
+    app.run(debug=debug, host='127.0.0.1', port=port, threaded=True)
