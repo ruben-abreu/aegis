@@ -5,13 +5,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Aegis - Security Assessment Tool</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='assets/aegis-logo.png') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 
 <body>
     <div class="container">
         <header>
-            <h1>🛡️ Aegis v1.0</h1>
+            <h1>
+                <img src="{{ url_for('static', filename='assets/aegis-logo.png') }}" alt="Aegis" class="aegis-logo">
+                Aegis v1.0
+            </h1>
             <button id="darkModeToggle" class="dark-mode-toggle" onclick="toggleDarkMode()">🌙 Dark Mode</button>
         </header>
 
