@@ -7,12 +7,32 @@ const SCAN_POLL_MS = 500;
 
 document.addEventListener('DOMContentLoaded', () => {
   initDarkMode();
-  loadScanners();
+  // The dropdown has to be populated before a saved scanner can be selected.
+  loadScanners().then(restoreLastSelection);
   loadScans();
   setupFormHandler();
   setupModalHandler();
   setupVisibilityHandler();
 });
+
+// Scanning the same target across several risk vectors is the normal workflow,
+// so the last choice is kept instead of being cleared after each run.
+function rememberLastSelection(target, scanner) {
+  localStorage.setItem('lastTarget', target);
+  localStorage.setItem('lastScanner', scanner);
+}
+
+function restoreLastSelection() {
+  const target = localStorage.getItem('lastTarget');
+  const scanner = localStorage.getItem('lastScanner');
+  const scannerSelect = document.getElementById('scanner');
+
+  if (target) document.getElementById('target').value = target;
+  // Ignore a stale scanner id that no longer exists.
+  if (scanner && scannerSelect.querySelector(`option[value="${scanner}"]`)) {
+    scannerSelect.value = scanner;
+  }
+}
 
 // Only this browser changes this instance's data, so the history is refreshed
 // on the events that change it rather than on a permanent timer. A scan in
@@ -47,9 +67,7 @@ function initDarkMode() {
 }
 
 function syncDarkModeLabel(isDark) {
-  document.getElementById('darkModeToggle').textContent = isDark
-    ? '☀️ Light Mode'
-    : '🌙 Dark Mode';
+  document.getElementById('darkModeToggle').textContent = isDark ? '☀️' : '🌙';
 }
 
 function colorizeOutput(text) {
@@ -230,7 +248,7 @@ function setupFormHandler() {
         const data = await response.json();
         currentScanId = data.id;
         showToast('Scan started!', 'success');
-        document.getElementById('scanForm').reset();
+        rememberLastSelection(targetInput, scanner);
 
         startPolling(data.id);
         loadScans();

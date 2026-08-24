@@ -24,14 +24,24 @@ full redirect chain.
 **SSL/TLS Configuration**
 Which protocol versions the server actually negotiates — TLS 1.0, 1.1 and SSLv3
 are flagged as violations — plus cipher strength, forward secrecy,
-Diffie-Hellman key size, certificate/hostname mismatch, HSTS (with `max-age`,
-`includeSubDomains` and `preload`), TLS compression (CRIME), session resumption
-and secure renegotiation.
+Diffie-Hellman key size, certificate/hostname mismatch, certificate scope, HSTS
+(with `max-age`, `includeSubDomains` and `preload`), TLS compression (CRIME),
+session resumption and secure renegotiation.
 
 **SSL/TLS Certificates**
 Validity window and time to expiry, key strength (RSA and ECDSA), signature
 algorithm (SHA-1 is a violation), self-signed detection, wildcard usage,
-SAN and CN hostname matching, Key Usage and Extended Key Usage.
+hostname matching, Key Usage and Extended Key Usage.
+
+Hostname matching follows RFC 6125: when a SAN extension is present it is
+authoritative and the Common Name is ignored, exactly as browsers do. A
+wildcard covers a single label, so `*.example.com` matches `www.example.com`
+but neither `a.b.example.com` nor `example.com` itself.
+
+Certificate scope is flagged above 25 SAN entries. A long SAN list means one
+private key protects many unrelated hosts, so a single key compromise or
+mis-issuance affects all of them, and any one of those hosts can impersonate
+the rest. Change the threshold with `MAX_SAN_ENTRIES` in either TLS scanner.
 
 **Open Ports**
 Checks a single specified port over TCP or UDP and names the service behind it.
@@ -127,7 +137,8 @@ aegis/
     ├── tls_certs.py     # certificate inspection
     ├── ports.py         # TCP/UDP port check
     ├── email.py         # SPF / DKIM / DMARC
-    └── dns.py           # DNS records, passive DNS graph
+    ├── dns.py           # DNS records, passive DNS graph
+    └── hostnames.py     # RFC 6125 hostname matching, shared by both TLS scanners
 ```
 
 ## Notes and limitations
@@ -138,8 +149,9 @@ and never leave the machine.
 There is no authentication, and the server binds to `127.0.0.1` on purpose. Do
 not expose it on `0.0.0.0` or to a network as it stands.
 
-`tls_config.py` shells out to `sslscan` once per check, so slow targets can time
-out and report a false failure. Caching a single run is on the list.
+`tls_config.py` runs `sslscan` once per target and shares the output across the
+checks that need it, so a slow target no longer produces false timeout
+failures on the later checks.
 
 Several `was.py` checks — HTTP methods, directory listing, server banner
 disclosure, form action inspection, technology fingerprinting — are written but

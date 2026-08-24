@@ -1,8 +1,42 @@
 import ssl
 import socket
+import re
 from urllib.parse import urlparse
 import requests
 import subprocess
+
+try:
+    from .hostnames import hostname_matches, first_match
+except ImportError:  # run directly rather than as part of the package
+    from hostnames import hostname_matches, first_match
+
+ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*m')
+
+# Above this many names on one certificate, a single stolen private key
+# compromises an unreasonably large set of hosts at once.
+MAX_SAN_ENTRIES = 25
+
+_sslscan_cache = {}
+
+def sslscan_output(host, port=443, timeout=60):
+    """One sslscan run per target, shared by every check that needs it.
+
+    Each check used to spawn its own sslscan; on a slow target the later ones
+    timed out and reported failures the server was not actually responsible
+    for. Cached per run, so adding checks costs nothing.
+    """
+    key = (host, port)
+    if key in _sslscan_cache:
+        return _sslscan_cache[key]
+
+    cmd = ["sslscan", host] if port == 443 else ["sslscan", "--port", str(port), host]
+    result = subprocess.run(cmd, capture_output=True, timeout=timeout, text=True)
+    output = result.stdout + result.stderr
+    _sslscan_cache[key] = output
+    return output
+
+def reset_sslscan_cache():
+    _sslscan_cache.clear()
 
 requests.packages.urllib3.disable_warnings()
 
@@ -40,14 +74,7 @@ def check_tls_versions(host, port=443):
     insecure_found = []
 
     try:
-        result = subprocess.run(
-            ["sslscan", host] if port == 443 else ["sslscan", "--port", str(port), host],
-            capture_output=True,
-            timeout=30,
-            text=True
-        )
-
-        output = result.stdout + result.stderr
+        output = sslscan_output(host, port)
 
         for version_name, is_modern in versions_to_check:
             if f"{version_name}" in output:
@@ -296,64 +323,118 @@ def check_protocol_downgrade_protection(host, port=443):
         warn(f"Unable to check protocol version: {e}")
         return False
 
+def parse_sslscan_identities(output):
+    """Pulls (san_identities, subject_cn) out of sslscan's certificate block.
+
+    Matched on the line prefix rather than a substring anywhere in the line, so
+    an unrelated line mentioning 'DNS:' cannot overwrite the real SAN list.
+    """
+    san_identities = []
+    subject_cn = None
+
+    for raw_line in output.split("\n"):
+        line = ANSI_ESCAPE.sub('', raw_line).strip()
+
+        if line.startswith("Subject:"):
+            subject_cn = line.split(":", 1)[1].strip() or None
+
+        elif line.startswith("Altnames:"):
+            entries = line.split(":", 1)[1].strip()
+            for entry in entries.split(","):
+                entry = entry.strip()
+                for prefix in ("DNS:", "IP Address:", "IP:"):
+                    if entry.startswith(prefix):
+                        entry = entry[len(prefix):].strip()
+                        break
+                if entry:
+                    san_identities.append(entry)
+
+    return san_identities, subject_cn
+
 def check_certificate_match(host, port=443):
-    print("\n[*] Certificate Domain Mismatch")
+    """Does the presented certificate identify this host?
+
+    RFC 6125: a present SAN extension is authoritative and the Common Name is
+    ignored. Checking them independently flags a mismatch on valid
+    certificates whose CN names some other host in the same deployment.
+    """
+    print("\n[*] Certificate Hostname Match")
 
     try:
-        result = subprocess.run(
-            ["sslscan", host] if port == 443 else ["sslscan", "--port", str(port), host],
-            capture_output=True,
-            timeout=30,
-            text=True
-        )
+        san_identities, subject_cn = parse_sslscan_identities(sslscan_output(host, port))
 
-        output = result.stdout + result.stderr
+        if san_identities:
+            shown = san_identities[:8]
+            print(f"    SAN ({len(san_identities)}): {', '.join(shown)}"
+                  + (f", +{len(san_identities) - len(shown)} more" if len(san_identities) > len(shown) else ""))
+            if subject_cn:
+                print(f"    CN: {subject_cn} (ignored: SAN is present)")
 
-        subject_match = False
-        altname_match = False
-        subject = None
-        altnames = []
+            matched = first_match(san_identities, host)
+            if matched:
+                ok(f"SAN entry '{matched}' matches {host}")
+                return True
 
-        for line in output.split("\n"):
-            if "Subject:" in line:
-                subject = line.split("Subject:")[1].strip()
-            if "Altnames:" in line or "DNS:" in line:
-                altnames_str = line.split("Altnames:")[1].strip() if "Altnames:" in line else line.split("DNS:")[1].strip()
-                altnames = [name.strip() for name in altnames_str.split(",")]
-
-        if subject and host.lower() in subject.lower():
-            subject_match = True
-            ok(f"Certificate Subject matches: {subject}")
-
-        if altnames:
-            for altname in altnames:
-                if host.lower() in altname.lower().replace("dns:", ""):
-                    altname_match = True
-                    ok(f"Certificate SAN matches: {', '.join(altnames)}")
-                    break
-
-        if not subject_match and not altname_match:
-            bad(f"Certificate mismatch! Subject: {subject}, SANs: {altnames}")
+            bad(f"NAME MISMATCH: no SAN entry matches {host}")
             return False
 
-        return True
+        if not subject_cn:
+            warn("Could not read certificate identities from sslscan output")
+            return False
+
+        warn("No SAN extension present (deprecated; clients require SAN)")
+        print(f"    CN: {subject_cn}")
+        if hostname_matches(subject_cn, host):
+            ok(f"CN matches {host}, but the missing SAN will still be rejected")
+            return True
+
+        bad(f"NAME MISMATCH: CN '{subject_cn}' does not match {host}")
+        return False
 
     except Exception as e:
         warn(f"Unable to check certificate match: {e}")
+        return False
+
+def check_san_count(host, port=443):
+    """Flags certificates covering an excessive number of names.
+
+    A large SAN list means one shared key protects many unrelated hosts, so a
+    single key compromise or mis-issuance takes all of them down together, and
+    any one of those hosts can impersonate the rest.
+    """
+    print("\n[*] Certificate Scope (SAN count)")
+
+    try:
+        san_identities, _ = parse_sslscan_identities(sslscan_output(host, port))
+        total = len(san_identities)
+
+        if total == 0:
+            warn("No SAN entries found to count")
+            return False
+
+        wildcards = sum(1 for name in san_identities if name.startswith("*."))
+        detail = f"{total} name{'' if total == 1 else 's'} on this certificate"
+        if wildcards:
+            detail += f" ({wildcards} wildcard)"
+        print(f"    {detail}")
+
+        if total > MAX_SAN_ENTRIES:
+            bad(f"EXCESSIVE SCOPE: {total} SAN entries (limit {MAX_SAN_ENTRIES})")
+            warn("    -> One shared key covers many hosts; a single compromise affects them all")
+            return False
+
+        ok(f"SAN count within limit ({total}/{MAX_SAN_ENTRIES})")
+        return True
+
+    except Exception as e:
+        warn(f"Unable to check SAN count: {e}")
         return False
 
 def check_dh_strength(host, port=443):
     print("\n[*] Diffie-Hellman (DH) Key Strength")
 
     try:
-        result = subprocess.run(
-            ["sslscan", host] if port == 443 else ["sslscan", "--port", str(port), host],
-            capture_output=True,
-            timeout=30,
-            text=True
-        )
-
-        output = result.stdout + result.stderr
+        output = sslscan_output(host, port)
 
         dh_found = False
         weak_dh = False
@@ -402,9 +483,13 @@ def run(target, target_type=None, port=443):
 
     print(f"\n[+] Connection successful")
 
+    # Fresh sslscan data per run, then shared across the checks below.
+    reset_sslscan_cache()
+
     check_tls_versions(target, port)
     check_cipher_suites(target, port)
     check_certificate_match(target, port)
+    check_san_count(target, port)
     check_dh_strength(target, port)
     check_forward_secrecy(target, port)
     check_hsts_header(target, port)

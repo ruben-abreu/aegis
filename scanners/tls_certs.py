@@ -7,6 +7,11 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
 import urllib3
 
+try:
+    from .hostnames import hostname_matches, first_match, is_ip_address
+except ImportError:  # run directly rather than as part of the package
+    from hostnames import hostname_matches, first_match, is_ip_address
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 GREEN="\033[92m"; RED="\033[91m"; YELLOW="\033[93m"; BOLD="\033[1m"; END="\033[0m"
@@ -14,6 +19,10 @@ GREEN="\033[92m"; RED="\033[91m"; YELLOW="\033[93m"; BOLD="\033[1m"; END="\033[0
 def ok(msg): print(f"{GREEN}[✓]{END} {msg}")
 def warn(msg): print(f"{YELLOW}[!]{END} {msg}")
 def bad(msg): print(f"{RED}[✗]{END} {msg}")
+
+# Above this many names on one certificate, a single stolen private key
+# compromises an unreasonably large set of hosts at once.
+MAX_SAN_ENTRIES = 25
 
 def get_certificate(host, port=443):
     try:
@@ -126,68 +135,100 @@ def check_signature_algorithm(cert):
         warn(f"Signature: {sig_algo} with {hash_algo.name}")
         return True
 
-def check_subject_alternative_names(cert, host):
-    print("\n[*] Subject Alternative Names (SAN)")
+def get_cert_identities(cert):
+    """Returns (san_identities, common_name).
 
+    SAN identities are the DNS names plus any IP addresses; either can be the
+    thing a client is asked to match.
+    """
+    identities = []
     try:
         san_ext = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
-        san_names = [name.value for name in san_ext.value]
+        for entry in san_ext.value:
+            if isinstance(entry, x509.DNSName):
+                identities.append(entry.value)
+            elif isinstance(entry, x509.IPAddress):
+                identities.append(str(entry.value))
+    except x509.ExtensionNotFound:
+        pass
 
-        if not san_names:
-            warn("No Subject Alternative Names present")
-            return False
+    common_name = None
+    try:
+        common_name = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
+    except (IndexError, AttributeError):
+        pass
 
-        ok(f"Found {len(san_names)} SAN(s)")
+    return identities, common_name
 
-        dns_names = []
-        for name in san_ext.value:
-            if isinstance(name, x509.DNSName):
-                dns_names.append(name.value)
-                print(f"    - {name.value}")
+def check_hostname_match(cert, host):
+    """Does the certificate actually identify this host?
 
-        if not dns_names:
-            bad("No DNS names in SAN extension")
-            return False
+    RFC 6125: when a SAN extension is present it is authoritative and the
+    Common Name must be ignored. Judging them separately reports a mismatch on
+    a perfectly valid certificate whose CN happens to name a different host.
+    """
+    print("\n[*] Hostname Match")
 
-        match_found = False
-        for dns_name in dns_names:
-            if wildcard_match(dns_name, host):
-                ok(f"Certificate matches {host}")
-                match_found = True
-                break
+    san_identities, common_name = get_cert_identities(cert)
 
-        if not match_found:
-            bad(f"No SAN entry matches {host}")
-            return False
+    if san_identities:
+        shown = san_identities[:8]
+        print(f"    SAN ({len(san_identities)} entr{'y' if len(san_identities) == 1 else 'ies'}): {', '.join(shown)}"
+              + (f", +{len(san_identities) - len(shown)} more" if len(san_identities) > len(shown) else ""))
+        if common_name:
+            print(f"    CN: {common_name} (ignored: SAN is present)")
 
+        matched = first_match(san_identities, host)
+        if matched:
+            ok(f"SAN entry '{matched}' matches {host}")
+            return True
+
+        bad(f"NAME MISMATCH: no SAN entry matches {host}")
+        return False
+
+    # No SAN: fall back to the CN, which modern clients no longer accept.
+    warn("No SAN extension present (deprecated; clients require SAN)")
+    if not common_name:
+        bad("NAME MISMATCH: certificate has neither SAN nor Common Name")
+        return False
+
+    print(f"    CN: {common_name}")
+    if hostname_matches(common_name, host):
+        ok(f"CN matches {host}, but the missing SAN will still be rejected")
         return True
 
-    except x509.ExtensionNotFound:
-        warn("No SAN extension present - checking CN only")
+    bad(f"NAME MISMATCH: CN '{common_name}' does not match {host}")
+    return False
+
+def check_san_count(cert):
+    """Flags certificates covering an excessive number of names.
+
+    A large SAN list means one shared key protects many unrelated hosts, so a
+    single key compromise or mis-issuance takes all of them down together, and
+    any one of those hosts can impersonate the rest.
+    """
+    print("\n[*] Certificate Scope (SAN count)")
+
+    identities, _ = get_cert_identities(cert)
+    total = len(identities)
+
+    if total == 0:
+        warn("No SAN entries to count")
         return False
 
-def check_common_name(cert, host):
-    print("\n[*] Common Name (CN)")
+    wildcards = sum(1 for name in identities if name.startswith("*."))
+    detail = f"{total} name{'' if total == 1 else 's'} on this certificate"
+    if wildcards:
+        detail += f" ({wildcards} wildcard)"
+    print(f"    {detail}")
 
-    try:
-        cn = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
-        print(f"    CN: {cn}")
-
-        if wildcard_match(cn, host):
-            ok(f"CN matches {host}")
-            return True
-        else:
-            bad(f"CN ({cn}) does not match {host}")
-            return False
-
-    except (IndexError, AttributeError):
-        bad("Common Name not found in certificate")
+    if total > MAX_SAN_ENTRIES:
+        warn(f"EXCESSIVE SCOPE: {total} SAN entries (limit {MAX_SAN_ENTRIES})")
+        warn("    -> One shared key covers many hosts; a single compromise affects them all")
         return False
 
-def wildcard_match(pattern, string):
-    """Check if a DNS name pattern matches a string (handles wildcards)."""
-    import fnmatch
-    return fnmatch.fnmatch(string.lower(), pattern.lower())
+    ok(f"SAN count within limit ({total}/{MAX_SAN_ENTRIES})")
+    return True
 
 def check_wildcard(cert):
     print("\n[*] Wildcard Certificate Check")
@@ -327,8 +368,8 @@ def run(target, target_type=None, port=443):
     check_signature_algorithm(cert)
     check_self_signed(cert)
     check_wildcard(cert)
-    check_subject_alternative_names(cert, target)
-    check_common_name(cert, target)
+    check_san_count(cert)
+    check_hostname_match(cert, target)
     check_key_usage(cert)
     check_extended_key_usage(cert)
 

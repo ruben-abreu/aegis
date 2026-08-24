@@ -14,9 +14,13 @@
         <header>
             <h1>
                 <img src="{{ url_for('static', filename='assets/aegis-logo.png') }}" alt="Aegis" class="aegis-logo">
-                Aegis v1.0
+                <span class="brand-name">
+                    Aegis
+                    <span class="version">v1.1</span>
+                </span>
             </h1>
-            <button id="darkModeToggle" class="dark-mode-toggle" onclick="toggleDarkMode()">🌙 Dark Mode</button>
+
+            <button id="darkModeToggle" class="dark-mode-toggle" onclick="toggleDarkMode()">🌙</button>
         </header>
 
         <main>
