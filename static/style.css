@@ -202,7 +202,8 @@ select:focus {
   box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
 }
 
-.tls-extended-option {
+.tls-extended-option,
+.server-software-note {
   margin-bottom: 5px;
 }
 
@@ -253,6 +254,31 @@ select:focus {
 
 .dark-mode .tls-option-badge {
   color: #aeb8ff;
+}
+
+.server-note-card {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(217, 150, 48, 0.4);
+  border-radius: 10px;
+  background: rgba(217, 150, 48, 0.08);
+}
+
+.server-note-badge {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(217, 150, 48, 0.18);
+  color: #9a6517;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dark-mode .server-note-badge {
+  color: #f1c36e;
 }
 
 .tls-option-description {
@@ -688,7 +714,8 @@ footer {
     white-space: nowrap;
   }
 
-  .scan-panel .tls-extended-option {
+  .scan-panel .tls-extended-option,
+  .scan-panel .server-software-note {
     grid-column: 1 / -1;
     grid-row: 2;
     margin-bottom: 0;
@@ -872,7 +899,8 @@ header h1 {
     margin-bottom: 12px;
   }
 
-  .scan-panel .tls-extended-option {
+  .scan-panel .tls-extended-option,
+  .scan-panel .server-software-note {
     margin-bottom: 8px;
   }
 

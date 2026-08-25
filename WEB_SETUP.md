@@ -45,6 +45,7 @@ That's it! 🎉
    3. SSL/TLS Certificates
    4. Open Ports
    5. Email Security (SPF/DKIM/DMARC)
+   6. Server Software
 
 > DNS Analysis is CLI-only (`python main.py`, option 6) and is intentionally
 > not exposed in the web version.

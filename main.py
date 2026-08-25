@@ -7,6 +7,7 @@ import scanners.tls_config as tls_config
 import scanners.was as was
 import scanners.ports as ports
 import scanners.email as email
+import scanners.server_software as server_software
 import re
 import ipaddress
 
@@ -149,6 +150,7 @@ def sub_menu(target_value, target_type, target_port):
         print("4. Open Ports")
         print("5. SPF / DKIM / DMARC")
         print("6. Graph PDNS")
+        print("7. Server Software")
         print("0. Change Target (New Domain/IP)")
         print("q. Quit")
 
@@ -175,6 +177,10 @@ def sub_menu(target_value, target_type, target_port):
 
         elif choice == "6":
             dns.run(target_value, target_type)
+
+        elif choice == "7":
+            port_to_use = current_port or prompt_for_port(default_port=443)
+            server_software.run(target_value, port=port_to_use)
 
         elif choice == "0":
             break

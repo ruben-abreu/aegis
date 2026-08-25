@@ -33,20 +33,23 @@ function restoreLastSelection() {
   if (scanner && scannerSelect.querySelector(`option[value="${scanner}"]`)) {
     scannerSelect.value = scanner;
   }
-  syncTlsOption();
+  syncScannerOptions();
 }
 
 function setupScannerOptions() {
-  document.getElementById('scanner').addEventListener('change', syncTlsOption);
-  syncTlsOption();
+  document.getElementById('scanner').addEventListener('change', syncScannerOptions);
+  syncScannerOptions();
 }
 
-function syncTlsOption() {
-  const isTlsConfig = document.getElementById('scanner').value === 'tls_config';
+function syncScannerOptions() {
+  const scanner = document.getElementById('scanner').value;
+  const isTlsConfig = scanner === 'tls_config';
   const option = document.getElementById('tlsExtendedOption');
   const checkbox = document.getElementById('checkCiphers');
+  const serverNote = document.getElementById('serverSoftwareNote');
 
   option.hidden = !isTlsConfig;
+  serverNote.hidden = scanner !== 'server_software';
   if (!isTlsConfig) checkbox.checked = false;
 }
 

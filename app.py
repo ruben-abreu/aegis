@@ -12,7 +12,7 @@ import threading
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from scanners import tls_certs, tls_config, was, ports, email
+from scanners import tls_certs, tls_config, was, ports, email, server_software
 
 app = Flask(__name__)
 app.json.sort_keys = False
@@ -27,6 +27,7 @@ SCANNERS = [
     ('tls_certs', 'SSL/TLS Certificates'),
     ('ports', 'Open Ports'),
     ('email', 'Email Security (SPF/DKIM/DMARC)'),
+    ('server_software', 'Server Software'),
 ]
 
 SCANNER_LABELS = dict(SCANNERS)
@@ -126,6 +127,8 @@ def run_scan_thread(
         with redirect_stdout(output_stream), redirect_stderr(output_stream):
             if scanner == 'was':
                 was.run(target, port=extracted_port)
+            elif scanner == 'server_software':
+                server_software.run(target, port=extracted_port)
             elif scanner == 'tls_config':
                 tls_config.run(
                     target,

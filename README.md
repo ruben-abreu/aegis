@@ -21,6 +21,14 @@ and a missing or permissive `object-src`, CORS wildcards with credentials,
 HTTPS-to-HTTP downgrades, mixed content, Subresource Integrity on external
 scripts, dated JavaScript libraries, and the full redirect chain.
 
+**Server Software**
+Passively fingerprints Bitsight-listed software from HTTP headers, HTML
+metadata, cookies and service banners. Detected versions are compared with a
+dated local snapshot of BitSight's [supported server software
+catalogue](https://help.bitsighttech.com/hc/en-us/articles/360010346733-Supported-Server-Software)
+and graded GOOD, FAIR, WARN, BAD or NEUTRAL. Hidden versions, reverse proxies
+and distribution backports are handled conservatively rather than guessed.
+
 **SSL/TLS Configuration**
 Which protocol versions the server actually negotiates — TLS 1.0, 1.1 and SSLv3
 are flagged as violations — plus cipher strength, forward secrecy,
@@ -135,6 +143,7 @@ aegis/
 │   └── app.js
 └── scanners/
     ├── was.py           # web application security
+    ├── server_software.py # passive software fingerprinting and support status
     ├── tls_config.py    # protocol versions, ciphers, DH, HSTS
     ├── tls_certs.py     # certificate inspection
     ├── ports.py         # TCP/UDP port check

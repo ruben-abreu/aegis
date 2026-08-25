@@ -16,7 +16,7 @@
                 <img src="{{ url_for('static', filename='assets/aegis-logo.png') }}" alt="Aegis" class="aegis-logo">
                 <span class="brand-name">
                     Aegis
-                    <span class="version">v1.2</span>
+                    <span class="version">v1.3</span>
                 </span>
             </h1>
 
@@ -57,6 +57,22 @@
                                 <span class="tls-switch-track" aria-hidden="true"></span>
                             </span>
                         </label>
+                    </div>
+
+                    <div id="serverSoftwareNote" class="server-software-note" role="note" hidden>
+                        <div class="server-note-card">
+                            <span class="tls-option-copy">
+                                <span class="tls-option-heading">
+                                    Detection limitations
+                                    <span class="server-note-badge">Best effort</span>
+                                </span>
+                                <span class="tls-option-description">
+                                    Banners can be hidden or spoofed, proxies can mask the origin, and vendor
+                                    backports may make version-only results inconclusive. A NEUTRAL result does not
+                                    confirm that the server is safe.
+                                </span>
+                            </span>
+                        </div>
                     </div>
 
                     <button type="submit" class="btn btn-primary">Start Scan</button>
