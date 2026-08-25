@@ -119,13 +119,20 @@ def save_scan(scan_id, target, scanner, extracted_port, output, status):
     conn.commit()
     conn.close()
 
-def run_scan_thread(scan_id, target, scanner, extracted_port, output_stream):
+def run_scan_thread(
+    scan_id, target, scanner, extracted_port, output_stream, check_ciphers=False
+):
     try:
         with redirect_stdout(output_stream), redirect_stderr(output_stream):
             if scanner == 'was':
                 was.run(target, port=extracted_port)
             elif scanner == 'tls_config':
-                tls_config.run(target, port=extracted_port)
+                tls_config.run(
+                    target,
+                    port=extracted_port,
+                    check_ciphers=check_ciphers,
+                    interactive=False,
+                )
             elif scanner == 'tls_certs':
                 tls_certs.run(target, port=extracted_port)
             elif scanner == 'ports':
@@ -154,12 +161,19 @@ def start_scan():
     data = request.json
     target_input = data.get('target', '').strip()
     scanner = data.get('scanner')
+    check_ciphers = data.get('check_ciphers', False)
 
     if not target_input or not scanner:
         return jsonify({'error': 'Missing target or scanner'}), 400
 
     if scanner not in SCANNER_LABELS:
         return jsonify({'error': f'Unknown scanner: {scanner}'}), 400
+
+    if not isinstance(check_ciphers, bool):
+        return jsonify({'error': 'check_ciphers must be true or false'}), 400
+
+    if scanner != 'tls_config':
+        check_ciphers = False
 
     target = target_input
     extracted_port = None
@@ -193,7 +207,14 @@ def start_scan():
 
         thread = threading.Thread(
             target=run_scan_thread,
-            args=(scan_id, target, scanner, extracted_port, output_stream),
+            args=(
+                scan_id,
+                target,
+                scanner,
+                extracted_port,
+                output_stream,
+                check_ciphers,
+            ),
             daemon=True
         )
         thread.start()

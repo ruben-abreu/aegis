@@ -1,20 +1,7 @@
 import ssl
 import socket
-import re
-from urllib.parse import urlparse
 import requests
 import subprocess
-
-try:
-    from .hostnames import hostname_matches, first_match
-except ImportError:  # run directly rather than as part of the package
-    from hostnames import hostname_matches, first_match
-
-ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*m')
-
-# Above this many names on one certificate, a single stolen private key
-# compromises an unreasonably large set of hosts at once.
-MAX_SAN_ENTRIES = 25
 
 _sslscan_cache = {}
 
@@ -323,113 +310,6 @@ def check_protocol_downgrade_protection(host, port=443):
         warn(f"Unable to check protocol version: {e}")
         return False
 
-def parse_sslscan_identities(output):
-    """Pulls (san_identities, subject_cn) out of sslscan's certificate block.
-
-    Matched on the line prefix rather than a substring anywhere in the line, so
-    an unrelated line mentioning 'DNS:' cannot overwrite the real SAN list.
-    """
-    san_identities = []
-    subject_cn = None
-
-    for raw_line in output.split("\n"):
-        line = ANSI_ESCAPE.sub('', raw_line).strip()
-
-        if line.startswith("Subject:"):
-            subject_cn = line.split(":", 1)[1].strip() or None
-
-        elif line.startswith("Altnames:"):
-            entries = line.split(":", 1)[1].strip()
-            for entry in entries.split(","):
-                entry = entry.strip()
-                for prefix in ("DNS:", "IP Address:", "IP:"):
-                    if entry.startswith(prefix):
-                        entry = entry[len(prefix):].strip()
-                        break
-                if entry:
-                    san_identities.append(entry)
-
-    return san_identities, subject_cn
-
-def check_certificate_match(host, port=443):
-    """Does the presented certificate identify this host?
-
-    RFC 6125: a present SAN extension is authoritative and the Common Name is
-    ignored. Checking them independently flags a mismatch on valid
-    certificates whose CN names some other host in the same deployment.
-    """
-    print("\n[*] Certificate Hostname Match")
-
-    try:
-        san_identities, subject_cn = parse_sslscan_identities(sslscan_output(host, port))
-
-        if san_identities:
-            shown = san_identities[:8]
-            print(f"    SAN ({len(san_identities)}): {', '.join(shown)}"
-                  + (f", +{len(san_identities) - len(shown)} more" if len(san_identities) > len(shown) else ""))
-            if subject_cn:
-                print(f"    CN: {subject_cn} (ignored: SAN is present)")
-
-            matched = first_match(san_identities, host)
-            if matched:
-                ok(f"SAN entry '{matched}' matches {host}")
-                return True
-
-            bad(f"NAME MISMATCH: no SAN entry matches {host}")
-            return False
-
-        if not subject_cn:
-            warn("Could not read certificate identities from sslscan output")
-            return False
-
-        warn("No SAN extension present (deprecated; clients require SAN)")
-        print(f"    CN: {subject_cn}")
-        if hostname_matches(subject_cn, host):
-            ok(f"CN matches {host}, but the missing SAN will still be rejected")
-            return True
-
-        bad(f"NAME MISMATCH: CN '{subject_cn}' does not match {host}")
-        return False
-
-    except Exception as e:
-        warn(f"Unable to check certificate match: {e}")
-        return False
-
-def check_san_count(host, port=443):
-    """Flags certificates covering an excessive number of names.
-
-    A large SAN list means one shared key protects many unrelated hosts, so a
-    single key compromise or mis-issuance takes all of them down together, and
-    any one of those hosts can impersonate the rest.
-    """
-    print("\n[*] Certificate Scope (SAN count)")
-
-    try:
-        san_identities, _ = parse_sslscan_identities(sslscan_output(host, port))
-        total = len(san_identities)
-
-        if total == 0:
-            warn("No SAN entries found to count")
-            return False
-
-        wildcards = sum(1 for name in san_identities if name.startswith("*."))
-        detail = f"{total} name{'' if total == 1 else 's'} on this certificate"
-        if wildcards:
-            detail += f" ({wildcards} wildcard)"
-        print(f"    {detail}")
-
-        if total > MAX_SAN_ENTRIES:
-            bad(f"EXCESSIVE SCOPE: {total} SAN entries (limit {MAX_SAN_ENTRIES})")
-            warn("    -> One shared key covers many hosts; a single compromise affects them all")
-            return False
-
-        ok(f"SAN count within limit ({total}/{MAX_SAN_ENTRIES})")
-        return True
-
-    except Exception as e:
-        warn(f"Unable to check SAN count: {e}")
-        return False
-
 def check_dh_strength(host, port=443):
     print("\n[*] Diffie-Hellman (DH) Key Strength")
 
@@ -468,7 +348,26 @@ def check_dh_strength(host, port=443):
         warn(f"Unable to check DH strength: {e}")
         return False
 
-def run(target, target_type=None, port=443):
+def should_check_ciphers(check_ciphers=None, interactive=True):
+    """Resolve whether the optional, slower sslscan checks should run."""
+    if check_ciphers is not None:
+        return bool(check_ciphers)
+
+    if not interactive:
+        return False
+
+    try:
+        answer = input(
+            "\nRun extended cipher, DH and TLS version checks with sslscan? "
+            "This can take up to a minute. [y/N]: "
+        ).strip().lower()
+    except EOFError:
+        return False
+
+    return answer in ("y", "yes")
+
+
+def run(target, target_type=None, port=443, check_ciphers=None, interactive=True):
     print("=" * 40)
     print(" TLS/SSL CONFIGURATION")
     print(f" Target: {target}")
@@ -483,19 +382,25 @@ def run(target, target_type=None, port=443):
 
     print(f"\n[+] Connection successful")
 
-    # Fresh sslscan data per run, then shared across the checks below.
+    # Fresh sslscan data per run. The cache is only populated if the user opts
+    # into the extended checks at the end of the scan.
     reset_sslscan_cache()
 
-    check_tls_versions(target, port)
-    check_cipher_suites(target, port)
-    check_certificate_match(target, port)
-    check_san_count(target, port)
-    check_dh_strength(target, port)
     check_forward_secrecy(target, port)
     check_hsts_header(target, port)
     check_ssl_compression(target, port)
     check_session_resumption(target, port)
     check_secure_renegotiation(target, port)
     check_protocol_downgrade_protection(target, port)
+
+    print("\n[*] Extended Cipher and TLS Version Scan")
+    if should_check_ciphers(check_ciphers, interactive):
+        print("    Running sslscan checks; this may take up to a minute...")
+        check_cipher_suites(target, port)
+        check_dh_strength(target, port)
+        # Keep the slow TLS version enumeration as the final test.
+        check_tls_versions(target, port)
+    else:
+        warn("Extended cipher, DH and TLS version checks skipped")
 
     print("\n" + "=" * 40)

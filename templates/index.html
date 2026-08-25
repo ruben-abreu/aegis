@@ -16,7 +16,7 @@
                 <img src="{{ url_for('static', filename='assets/aegis-logo.png') }}" alt="Aegis" class="aegis-logo">
                 <span class="brand-name">
                     Aegis
-                    <span class="version">v1.1</span>
+                    <span class="version">v1.2</span>
                 </span>
             </h1>
 
@@ -38,6 +38,25 @@
                         <select id="scanner" name="scanner" required>
                             <option value="">Select a scanner...</option>
                         </select>
+                    </div>
+
+                    <div id="tlsExtendedOption" class="tls-extended-option" hidden>
+                        <label class="tls-option-card" for="checkCiphers">
+                            <span class="tls-option-copy">
+                                <span class="tls-option-heading">
+                                    Extended TLS scan
+                                    <span class="tls-option-badge">Optional</span>
+                                </span>
+                                <span id="tlsOptionDescription" class="tls-option-description">
+                                    Check supported ciphers, DH strength and legacy TLS versions. May take up to a
+                                    minute.
+                                </span>
+                            </span>
+                            <span class="tls-switch">
+                                <input type="checkbox" id="checkCiphers" aria-describedby="tlsOptionDescription">
+                                <span class="tls-switch-track" aria-hidden="true"></span>
+                            </span>
+                        </label>
                     </div>
 
                     <button type="submit" class="btn btn-primary">Start Scan</button>

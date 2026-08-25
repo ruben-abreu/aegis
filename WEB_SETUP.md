@@ -90,9 +90,11 @@ aegis-web/
 2. **Enter target** (domain or IP)
 3. **Add a port** (e.g., 443 or 161/udp); Email Security accepts a bare domain
 4. **Click "Start Scan"**
-5. **Results appear** in scan history
-6. **Click scan** to view full results
-7. **Export as JSON** if needed
+5. For SSL/TLS Configuration, choose whether to run the slower extended
+   cipher, DH and TLS-version checks
+6. **Results appear** in scan history
+7. **Click scan** to view full results
+8. **Export as JSON** if needed
 
 ## Stopping the App
 

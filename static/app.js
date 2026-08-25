@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadScanners().then(restoreLastSelection);
   loadScans();
   setupFormHandler();
+  setupScannerOptions();
   setupModalHandler();
   setupVisibilityHandler();
 });
@@ -32,6 +33,21 @@ function restoreLastSelection() {
   if (scanner && scannerSelect.querySelector(`option[value="${scanner}"]`)) {
     scannerSelect.value = scanner;
   }
+  syncTlsOption();
+}
+
+function setupScannerOptions() {
+  document.getElementById('scanner').addEventListener('change', syncTlsOption);
+  syncTlsOption();
+}
+
+function syncTlsOption() {
+  const isTlsConfig = document.getElementById('scanner').value === 'tls_config';
+  const option = document.getElementById('tlsExtendedOption');
+  const checkbox = document.getElementById('checkCiphers');
+
+  option.hidden = !isTlsConfig;
+  if (!isTlsConfig) checkbox.checked = false;
 }
 
 // Only this browser changes this instance's data, so the history is refreshed
@@ -231,6 +247,9 @@ function setupFormHandler() {
       return;
     }
 
+    const checkCiphers =
+      scanner === 'tls_config' && document.getElementById('checkCiphers').checked;
+
     try {
       const resultsDisplay = document.getElementById('resultsDisplay');
       resultsDisplay.innerHTML = '<p class="loading">Scan starting...</p>';
@@ -241,6 +260,7 @@ function setupFormHandler() {
         body: JSON.stringify({
           target: targetInput,
           scanner,
+          check_ciphers: checkCiphers,
         }),
       });
 
