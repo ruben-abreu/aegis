@@ -1,6 +1,5 @@
 import socket
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import smtplib
 
 GREEN="\033[92m"; RED="\033[91m"; YELLOW="\033[93m"; BOLD="\033[1m"; END="\033[0m"
 
@@ -19,6 +18,8 @@ UDP_PORTS = {
     389: "LDAP",
     5353: "mDNS",
 }
+
+SMTP_STARTTLS_PORTS = {25, 587}
 
 PORT_DEFINITIONS = {
     "Web Services": {
@@ -122,6 +123,61 @@ def get_port_service(port):
             return ports[port], category
     return None, None
 
+
+def _smtp_text(value):
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    return " ".join(str(value).split())
+
+
+def check_smtp_starttls(host, port, timeout=7):
+    """Use EHLO to determine whether an SMTP service advertises STARTTLS.
+
+    No mail transaction is attempted. Port 465 is deliberately excluded by
+    the caller because it uses implicit TLS rather than the STARTTLS upgrade.
+    """
+    print("\n[*] SMTP Transport Security")
+    smtp = smtplib.SMTP(timeout=timeout)
+
+    try:
+        greeting_code, greeting = smtp.connect(host, port)
+        if greeting_code != 220:
+            warn(
+                f"SMTP service returned greeting code {greeting_code}; "
+                "STARTTLS support could not be determined"
+            )
+            return None
+
+        print(f"    Banner: {_smtp_text(greeting)}")
+        ehlo_code, ehlo_response = smtp.ehlo("aegis.local")
+        if ehlo_code != 250:
+            warn(
+                f"SMTP EHLO returned code {ehlo_code}; STARTTLS support "
+                "could not be determined"
+            )
+            return None
+
+        if smtp.has_extn("starttls"):
+            ok(f"STARTTLS advertised on port {port}")
+            return True
+
+        bad(
+            f"STARTTLS NOT advertised on port {port}; SMTP transport is "
+            "plaintext-only"
+        )
+        if ehlo_response:
+            print(f"    EHLO response: {_smtp_text(ehlo_response)[:500]}")
+        return False
+
+    except (OSError, smtplib.SMTPException) as exc:
+        warn(f"Unable to determine SMTP STARTTLS support: {exc}")
+        return None
+    finally:
+        try:
+            smtp.quit()
+        except (OSError, smtplib.SMTPException):
+            smtp.close()
+
 def run(target, target_type=None, port=None):
     print("=" * 50)
     print(" OPEN PORT SCAN")
@@ -156,6 +212,9 @@ def run(target, target_type=None, port=None):
             ok(f"Port {port_num}/{protocol.upper()} is OPEN - {service} ({category})")
         else:
             ok(f"Port {port_num}/{protocol.upper()} is OPEN - Unknown service")
+
+        if protocol == "tcp" and port_num in SMTP_STARTTLS_PORTS:
+            check_smtp_starttls(target, port_num)
     else:
         bad(f"Port {port_num}/{protocol.upper()} is CLOSED or filtered")
 

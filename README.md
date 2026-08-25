@@ -54,7 +54,10 @@ the rest. Change the threshold with `MAX_SAN_ENTRIES` in `tls_certs.py`.
 **Open Ports**
 Checks a single specified port over TCP or UDP and names the service behind it.
 Ports that are conventionally UDP — 53, 123, 161, 162 and others — switch to UDP
-automatically, and you can force either with `161/udp` or `161/tcp`.
+automatically, and you can force either with `161/udp` or `161/tcp`. When SMTP
+port 25 or 587 is open, Aegis sends an `EHLO` capability query and reports
+whether STARTTLS is advertised. Port 465 is excluded because it uses implicit
+TLS instead of STARTTLS.
 
 **Email Security**
 SPF (qualifier strength, the 10-lookup limit, deprecated `ptr`), DMARC (policy,
@@ -151,6 +154,16 @@ aegis/
     ├── dns.py           # DNS records, passive DNS graph
     └── hostnames.py     # RFC 6125 hostname matching, shared by both TLS scanners
 ```
+
+## Testing
+
+After installing the project dependencies, run the complete automated suite with:
+
+```bash
+python3 -m unittest discover -v
+```
+
+The tests mock network and subprocess calls, so they do not scan real targets.
 
 ## Notes and limitations
 
