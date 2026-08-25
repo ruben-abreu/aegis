@@ -161,17 +161,21 @@ def start_scan():
     if scanner not in SCANNER_LABELS:
         return jsonify({'error': f'Unknown scanner: {scanner}'}), 400
 
-    if ':' not in target_input:
-        return jsonify({'error': 'Format required: apple.com:443 or 1.2.3.4:161/udp'}), 400
+    target = target_input
+    extracted_port = None
 
-    try:
-        target, port_str = target_input.rsplit(':', 1)
-        extracted_port = int(port_str.split('/')[0])
-    except (ValueError, IndexError):
-        return jsonify({'error': 'Invalid port format'}), 400
-
-    if not extracted_port:
-        return jsonify({'error': 'Port is required'}), 400
+    if ':' in target_input:
+        try:
+            target, port_str = target_input.rsplit(':', 1)
+            extracted_port = int(port_str.split('/')[0])
+        except (ValueError, IndexError):
+            return jsonify({'error': 'Invalid port format'}), 400
+        if not 1 <= extracted_port <= 65535:
+            return jsonify({'error': 'Port must be between 1 and 65535'}), 400
+    elif scanner != 'email':
+        return jsonify({
+            'error': 'Port is required for this scanner. Example: apple.com:443'
+        }), 400
 
     try:
         conn = sqlite3.connect(DB_FILE)
@@ -413,7 +417,7 @@ def export_scan(scan_id):
             "AEGIS SECURITY ASSESSMENT\n"
             + "=" * 68 + "\n"
             f"Risk Vector : {risk_vector}\n"
-            f"Target      : {target}:{port}\n"
+            f"Target      : {target}{f':{port}' if port is not None else ''}\n"
             f"Scanned     : {timestamp}\n"
             f"Status      : {status}\n"
             + "=" * 68 + "\n\n"

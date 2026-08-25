@@ -88,7 +88,7 @@ aegis-web/
 
 1. **Select a scanner** from dropdown
 2. **Enter target** (domain or IP)
-3. **Optional: Add port** (e.g., 443 or 161/udp)
+3. **Add a port** (e.g., 443 or 161/udp); Email Security accepts a bare domain
 4. **Click "Start Scan"**
 5. **Results appear** in scan history
 6. **Click scan** to view full results

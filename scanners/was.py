@@ -45,12 +45,26 @@ def check_headers(r):
             bad(msg)
     csp=r.headers.get("Content-Security-Policy","")
     if csp:
+        directives = {}
+        for directive in csp.split(";"):
+            parts = directive.strip().split()
+            if parts:
+                directives[parts[0].lower()] = parts[1:]
+
         if "'unsafe-inline'" in csp:
             warn("CSP contains 'unsafe-inline'")
         if "'unsafe-eval'" in csp:
             warn("CSP contains 'unsafe-eval'")
-        if "default-src" not in csp:
+        if "default-src" not in directives:
             warn("CSP missing default-src")
+
+        object_sources = directives.get("object-src")
+        if object_sources is None:
+            warn("CSP missing explicit object-src directive (recommend object-src 'none')")
+        elif object_sources == ["'none'"]:
+            ok("CSP object-src is restricted to 'none'")
+        else:
+            warn(f"CSP object-src is not restricted to 'none': {' '.join(object_sources)}")
 
 """
 def check_server(r):

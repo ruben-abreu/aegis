@@ -16,10 +16,10 @@ networking and security. It is not a replacement for a commercial scanner.
 
 **Web Application Security**
 Security headers (CSP, HSTS, X-Frame-Options, X-Content-Type-Options,
-Referrer-Policy, Permissions-Policy), CSP weaknesses such as `unsafe-inline`,
-CORS wildcards with credentials, HTTPS-to-HTTP downgrades, mixed content,
-Subresource Integrity on external scripts, dated JavaScript libraries, and the
-full redirect chain.
+Referrer-Policy, Permissions-Policy), CSP weaknesses such as `unsafe-inline`
+and a missing or permissive `object-src`, CORS wildcards with credentials,
+HTTPS-to-HTTP downgrades, mixed content, Subresource Integrity on external
+scripts, dated JavaScript libraries, and the full redirect chain.
 
 **SSL/TLS Configuration**
 Which protocol versions the server actually negotiates — TLS 1.0, 1.1 and SSLv3
@@ -98,8 +98,10 @@ CLI:
 python main.py
 ```
 
-Targets accept an optional port in either interface: `example.com`,
-`example.com:8443`, `1.2.3.4`, `1.2.3.4:161/udp`. Only public IPs are allowed.
+CLI targets accept an optional port: `example.com`, `example.com:8443`,
+`1.2.3.4`, `1.2.3.4:161/udp`. In the web interface a port is required for all
+scanners except Email Security, which accepts a bare domain such as
+`example.com`. Only public IPs are allowed.
 
 ## Exports
 

@@ -226,8 +226,8 @@ function setupFormHandler() {
       return;
     }
 
-    if (!targetInput.includes(':')) {
-      showToast('Format required: apple.com:443 or 1.2.3.4:161/udp', 'error');
+    if (scanner !== 'email' && !targetInput.includes(':')) {
+      showToast('A port is required for this scanner, for example apple.com:443', 'error');
       return;
     }
 
