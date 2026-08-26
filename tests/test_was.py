@@ -2,7 +2,7 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from scanners import was
 
@@ -81,6 +81,25 @@ class WebApplicationSecurityTests(unittest.TestCase):
             was.check_mixed(response)
 
         self.assertIn("HTTP resources referenced", output.getvalue())
+
+    def test_redirect_chain_is_reported_before_security_checks(self):
+        response = FakeResponse()
+        calls = []
+        replacements = {
+            "fetch": Mock(return_value=response),
+            "print_redirect_chain": Mock(side_effect=lambda _r: calls.append("redirect")),
+            "check_headers": Mock(side_effect=lambda _r: calls.append("headers")),
+            "check_cors": Mock(),
+            "check_https_downgrade": Mock(),
+            "check_mixed": Mock(),
+            "check_js": Mock(),
+            "check_sri": Mock(),
+        }
+
+        with patch.multiple(was, **replacements), redirect_stdout(StringIO()):
+            was.run("example.com", port=443)
+
+        self.assertEqual(["redirect", "headers"], calls)
 
 
 if __name__ == "__main__":

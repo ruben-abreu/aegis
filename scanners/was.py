@@ -374,6 +374,9 @@ def run(target, port=443):
     print(f"\n[+] Connected successfully")
     print(f"Resolved URL: {r.url}")
 
+    # Show how the target resolved before reporting checks against the final
+    # response, so redirects are part of the scan's opening context.
+    print_redirect_chain(r)
     check_headers(r)
     #check_server(r)
     check_cors(r)
@@ -387,4 +390,3 @@ def run(target, port=443):
     check_js(r)
     check_sri(r)
     #fingerprint(r)
-    print_redirect_chain(r)
