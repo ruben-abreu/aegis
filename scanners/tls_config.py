@@ -4,6 +4,13 @@ import requests
 import subprocess
 import shlex
 
+from cryptography import x509
+
+try:
+    from .hostnames import first_match, get_cert_identities, hostname_matches
+except ImportError:  # run directly rather than as part of the package
+    from hostnames import first_match, get_cert_identities, hostname_matches
+
 _sslscan_cache = {}
 
 def sslscan_output(host, port=443, timeout=60):
@@ -71,7 +78,65 @@ def capture_tls_handshake(host, port=443):
                 "cipher_bits": cipher[2],
                 "compression": ssock.compression() or "None",
                 "session_ticket": bool(session and session.has_ticket),
+                "certificate_der": ssock.getpeercert(binary_form=True),
             }
+
+
+def _certificate_from_handshake(handshake):
+    certificate_der = (handshake or {}).get("certificate_der")
+    if not certificate_der:
+        return None
+    try:
+        return x509.load_der_x509_certificate(certificate_der)
+    except (TypeError, ValueError):
+        return None
+
+
+def check_hostname_match(cert, host):
+    """Check whether the peer certificate identifies the requested host."""
+    print("\n[*] Certificate Name Match")
+
+    if cert is None:
+        warn("Unable to inspect certificate names from the TLS handshake")
+        return False
+
+    san_identities, common_name = get_cert_identities(cert)
+
+    if san_identities:
+        shown = san_identities[:8]
+        suffix = (
+            f", +{len(san_identities) - len(shown)} more"
+            if len(san_identities) > len(shown)
+            else ""
+        )
+        count_label = "entry" if len(san_identities) == 1 else "entries"
+        print(
+            f"    SAN ({len(san_identities)} {count_label}): "
+            f"{', '.join(shown)}{suffix}"
+        )
+        if common_name:
+            print(f"    CN: {common_name} (ignored: SAN is present)")
+
+        matched = first_match(san_identities, host)
+        if matched:
+            ok(f"SAN entry '{matched}' matches {host}")
+            return True
+
+        bad(f"NAME MISMATCH: no SAN entry matches {host}")
+        return False
+
+    warn("No SAN extension present (deprecated; clients require SAN)")
+    if not common_name:
+        bad("NAME MISMATCH: certificate has neither SAN nor Common Name")
+        return False
+
+    print(f"    CN: {common_name}")
+    if hostname_matches(common_name, host):
+        ok(f"CN matches {host}, but the missing SAN will still be rejected")
+        return True
+
+    bad(f"NAME MISMATCH: CN '{common_name}' does not match {host}")
+    return False
 
 
 def format_tls_config_evidence(
@@ -90,6 +155,11 @@ def format_tls_config_evidence(
         (
             f"$ openssl s_client -connect {authority} -servername {server_name} "
             "-brief </dev/null"
+        ),
+        (
+            f"$ openssl s_client -connect {authority} -servername {server_name} "
+            "</dev/null 2>/dev/null | openssl x509 -noout -subject "
+            "-ext subjectAltName"
         ),
         f"$ {sslscan_command}",
         "",
@@ -111,6 +181,16 @@ def format_tls_config_evidence(
                 ),
             )
         )
+        cert = _certificate_from_handshake(handshake)
+        if cert is not None:
+            san_identities, common_name = get_cert_identities(cert)
+            lines.extend(
+                (
+                    f"Certificate common name: {common_name or 'not present'}",
+                    "Certificate SAN identities: "
+                    + (", ".join(san_identities) if san_identities else "not present"),
+                )
+            )
     elif error:
         lines.append(f"Handshake error: {error}")
 
@@ -466,6 +546,7 @@ def run(target, target_type=None, port=443, check_ciphers=None, interactive=True
     # into the extended checks at the end of the scan.
     reset_sslscan_cache()
 
+    check_hostname_match(_certificate_from_handshake(handshake), target)
     check_forward_secrecy(target, port)
     check_hsts_header(target, port)
     check_ssl_compression(target, port)

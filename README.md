@@ -33,18 +33,19 @@ and distribution backports are handled conservatively rather than guessed.
 Which protocol versions the server actually negotiates — TLS 1.0, 1.1 and SSLv3
 are flagged as violations — plus cipher strength, forward secrecy,
 Diffie-Hellman key size, HSTS (with `max-age`, `includeSubDomains` and `preload`),
-TLS compression (CRIME), session resumption and secure renegotiation. The slower
-`sslscan` cipher, DH and TLS-version checks are optional and run last.
-
-**SSL/TLS Certificates**
-Validity window and time to expiry, key strength (RSA and ECDSA), signature
-algorithm (SHA-1 is a violation), self-signed detection, wildcard usage,
-hostname matching, Key Usage and Extended Key Usage.
+TLS compression (CRIME), session resumption, secure renegotiation and certificate
+name mismatch. The slower `sslscan` cipher, DH and TLS-version checks are optional
+and run last.
 
 Hostname matching follows RFC 6125: when a SAN extension is present it is
 authoritative and the Common Name is ignored, exactly as browsers do. A
 wildcard covers a single label, so `*.example.com` matches `www.example.com`
 but neither `a.b.example.com` nor `example.com` itself.
+
+**SSL/TLS Certificates**
+Validity window and time to expiry, key strength (RSA and ECDSA), signature
+algorithm (SHA-1 is a violation), self-signed detection, wildcard usage,
+certificate scope, Key Usage and Extended Key Usage.
 
 Certificate scope is flagged above 25 SAN entries. A long SAN list means one
 private key protects many unrelated hosts, so a single key compromise or
@@ -154,7 +155,7 @@ aegis/
 └── scanners/
     ├── was.py           # web application security
     ├── server_software.py # passive software fingerprinting and support status
-    ├── tls_config.py    # protocol versions, ciphers, DH, HSTS
+    ├── tls_config.py    # protocol versions, ciphers, DH, HSTS, name mismatch
     ├── tls_certs.py     # certificate inspection
     ├── ports.py         # TCP/UDP port check
     ├── email.py         # SPF / DKIM / DMARC

@@ -9,9 +9,9 @@ from cryptography.hazmat.primitives.asymmetric import rsa, ec
 import urllib3
 
 try:
-    from .hostnames import hostname_matches, first_match, is_ip_address
+    from .hostnames import get_cert_identities, is_ip_address
 except ImportError:  # run directly rather than as part of the package
-    from hostnames import hostname_matches, first_match, is_ip_address
+    from hostnames import get_cert_identities, is_ip_address
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -199,71 +199,6 @@ def check_signature_algorithm(cert):
         warn(f"Signature: {sig_algo} with {hash_algo.name}")
         return True
 
-def get_cert_identities(cert):
-    """Returns (san_identities, common_name).
-
-    SAN identities are the DNS names plus any IP addresses; either can be the
-    thing a client is asked to match.
-    """
-    identities = []
-    try:
-        san_ext = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
-        for entry in san_ext.value:
-            if isinstance(entry, x509.DNSName):
-                identities.append(entry.value)
-            elif isinstance(entry, x509.IPAddress):
-                identities.append(str(entry.value))
-    except x509.ExtensionNotFound:
-        pass
-
-    common_name = None
-    try:
-        common_name = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
-    except (IndexError, AttributeError):
-        pass
-
-    return identities, common_name
-
-def check_hostname_match(cert, host):
-    """Does the certificate actually identify this host?
-
-    RFC 6125: when a SAN extension is present it is authoritative and the
-    Common Name must be ignored. Judging them separately reports a mismatch on
-    a perfectly valid certificate whose CN happens to name a different host.
-    """
-    print("\n[*] Hostname Match")
-
-    san_identities, common_name = get_cert_identities(cert)
-
-    if san_identities:
-        shown = san_identities[:8]
-        print(f"    SAN ({len(san_identities)} entr{'y' if len(san_identities) == 1 else 'ies'}): {', '.join(shown)}"
-              + (f", +{len(san_identities) - len(shown)} more" if len(san_identities) > len(shown) else ""))
-        if common_name:
-            print(f"    CN: {common_name} (ignored: SAN is present)")
-
-        matched = first_match(san_identities, host)
-        if matched:
-            ok(f"SAN entry '{matched}' matches {host}")
-            return True
-
-        bad(f"NAME MISMATCH: no SAN entry matches {host}")
-        return False
-
-    # No SAN: fall back to the CN, which modern clients no longer accept.
-    warn("No SAN extension present (deprecated; clients require SAN)")
-    if not common_name:
-        bad("NAME MISMATCH: certificate has neither SAN nor Common Name")
-        return False
-
-    print(f"    CN: {common_name}")
-    if hostname_matches(common_name, host):
-        ok(f"CN matches {host}, but the missing SAN will still be rejected")
-        return True
-
-    bad(f"NAME MISMATCH: CN '{common_name}' does not match {host}")
-    return False
-
 def check_san_count(cert):
     """Flags certificates covering an excessive number of names.
 
@@ -433,7 +368,6 @@ def run(target, target_type=None, port=443):
     check_self_signed(cert)
     check_wildcard(cert)
     check_san_count(cert)
-    check_hostname_match(cert, target)
     check_key_usage(cert)
     check_extended_key_usage(cert)
 

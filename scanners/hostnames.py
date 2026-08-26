@@ -9,6 +9,9 @@ direction: a plain substring test accepts 'apple.com.evil.net' as a match for
 
 import ipaddress
 
+from cryptography import x509
+from cryptography.x509.oid import ExtensionOID, NameOID
+
 
 def is_ip_address(value):
     try:
@@ -68,3 +71,27 @@ def first_match(patterns, hostname):
         if hostname_matches(pattern, hostname):
             return pattern
     return None
+
+
+def get_cert_identities(cert):
+    """Return the SAN DNS/IP identities and Common Name from a certificate."""
+    identities = []
+    try:
+        san_ext = cert.extensions.get_extension_for_oid(
+            ExtensionOID.SUBJECT_ALTERNATIVE_NAME
+        )
+        for entry in san_ext.value:
+            if isinstance(entry, x509.DNSName):
+                identities.append(entry.value)
+            elif isinstance(entry, x509.IPAddress):
+                identities.append(str(entry.value))
+    except x509.ExtensionNotFound:
+        pass
+
+    common_name = None
+    try:
+        common_name = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
+    except (IndexError, AttributeError):
+        pass
+
+    return identities, common_name

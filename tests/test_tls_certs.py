@@ -2,6 +2,7 @@ import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta
 from io import StringIO
+from unittest.mock import patch
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
@@ -59,11 +60,6 @@ class CertificateScannerTests(unittest.TestCase):
         self.assertEqual(common_name, "example.com")
         self.assertEqual(identities, ["example.com", "*.example.org"])
 
-    def test_hostname_match_uses_san(self):
-        with redirect_stdout(StringIO()):
-            self.assertTrue(tls_certs.check_hostname_match(self.cert, "www.example.org"))
-            self.assertFalse(tls_certs.check_hostname_match(self.cert, "unrelated.test"))
-
     def test_certificate_security_checks_pass_for_fixture(self):
         with redirect_stdout(StringIO()):
             self.assertTrue(tls_certs.check_validity(self.cert))
@@ -76,6 +72,18 @@ class CertificateScannerTests(unittest.TestCase):
     def test_fixture_is_detected_as_self_signed(self):
         with redirect_stdout(StringIO()):
             self.assertTrue(tls_certs.check_self_signed(self.cert))
+
+    def test_certificate_scan_does_not_assess_name_mismatch(self):
+        output = StringIO()
+        with patch(
+            "scanners.tls_certs.get_certificate",
+            return_value=(self.cert, "TLSv1.3"),
+        ):
+            with redirect_stdout(output):
+                tls_certs.run("unrelated.test")
+
+        self.assertNotIn("NAME MISMATCH", output.getvalue())
+        self.assertNotIn("Certificate Name Match", output.getvalue())
 
     def test_certificate_evidence_contains_reproduction_and_captured_fields(self):
         evidence = tls_certs.format_certificate_evidence(

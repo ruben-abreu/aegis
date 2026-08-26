@@ -60,6 +60,7 @@ class TlsConfigurationTests(unittest.TestCase):
     def test_extended_checks_run_last_and_tls_versions_are_final(self):
         call_order = []
         check_names = (
+            "check_hostname_match",
             "check_forward_secrecy",
             "check_hsts_header",
             "check_ssl_compression",
@@ -94,6 +95,23 @@ class TlsConfigurationTests(unittest.TestCase):
 
         self.assertEqual(list(check_names), call_order)
         self.assertEqual(call_order[-1], "check_tls_versions")
+
+    def test_name_mismatch_is_assessed_by_configuration_scanner(self):
+        output = StringIO()
+        with patch(
+            "scanners.tls_config.get_cert_identities",
+            return_value=(["example.com", "*.example.org"], "example.com"),
+        ):
+            with redirect_stdout(output):
+                self.assertTrue(
+                    tls_config.check_hostname_match(object(), "www.example.org")
+                )
+                self.assertFalse(
+                    tls_config.check_hostname_match(object(), "unrelated.test")
+                )
+
+        self.assertIn("Certificate Name Match", output.getvalue())
+        self.assertIn("NAME MISMATCH", output.getvalue())
 
     def test_declining_extended_checks_skips_sslscan_checks(self):
         with ExitStack() as stack:
@@ -135,6 +153,7 @@ class TlsConfigurationTests(unittest.TestCase):
         )
 
         self.assertIn("openssl s_client -connect example.com:443", evidence)
+        self.assertIn("openssl x509 -noout -subject -ext subjectAltName", evidence)
         self.assertIn("Negotiated cipher: TLS_AES_256_GCM_SHA384", evidence)
         self.assertIn("RAW SSLSCAN OUTPUT", evidence)
         self.assertIn("TLSv1.0 disabled", evidence)
