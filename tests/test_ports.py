@@ -41,7 +41,7 @@ class SmtpStarttlsTests(unittest.TestCase):
         with redirect_stdout(StringIO()):
             ports.run("mail.example", port=25)
 
-        starttls_check.assert_called_once_with("mail.example", 25)
+        starttls_check.assert_called_once_with("mail.example", 25, evidence=[])
 
     @patch("scanners.ports.check_smtp_starttls")
     @patch("scanners.ports.test_port", return_value=True)
@@ -50,6 +50,27 @@ class SmtpStarttlsTests(unittest.TestCase):
             ports.run("mail.example", port=465)
 
         starttls_check.assert_not_called()
+
+    @patch("scanners.ports.smtplib.SMTP")
+    def test_smtp_evidence_contains_ehlo_transcript(self, smtp_class):
+        smtp_class.return_value = self._smtp_client(has_starttls=True)
+        evidence = []
+
+        with redirect_stdout(StringIO()):
+            ports.check_smtp_starttls("mail.example", 25, evidence=evidence)
+
+        transcript = "\n".join(evidence)
+        self.assertIn("SMTP greeting: 220", transcript)
+        self.assertIn("EHLO response: 250", transcript)
+        self.assertIn("STARTTLS capability advertised: yes", transcript)
+
+    @patch("scanners.ports.test_port", return_value=True)
+    def test_port_run_returns_reproduction_and_socket_evidence(self, test_port):
+        with redirect_stdout(StringIO()):
+            result = ports.run("example.com", port=443)
+
+        self.assertIn("nc -z -n -v", result["evidence"])
+        self.assertIn("Result: OPEN", result["evidence"])
 
 
 if __name__ == "__main__":

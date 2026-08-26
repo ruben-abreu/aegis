@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import date
 from html.parser import HTMLParser
 import re
+import shlex
 import socket
 from typing import Optional
 
@@ -590,6 +591,51 @@ def _print_assessment(fingerprint, assessment):
         print(f"[+] {message}")
 
 
+def format_server_software_evidence(
+    target, port, response=None, errors=None, banner="", banner_error=None
+):
+    """Return the headers/banner used for fingerprinting and reference commands."""
+    host = shlex.quote(str(target))
+    lines = [
+        "REPRODUCE MANUALLY",
+        f"$ nmap -sV --script=http-headers -Pn -p {port} {host}",
+    ]
+
+    if port not in NON_HTTP_PORTS:
+        scheme = "https" if port in HTTPS_LIKELY_PORTS else "http"
+        default_port = 443 if scheme == "https" else 80
+        authority = target if port == default_port else f"{target}:{port}"
+        lines.append(f"$ curl -IL -k {shlex.quote(f'{scheme}://{authority}')}")
+    if port in BANNER_PORTS:
+        lines.append(f"$ nc -n -v {host} {port}")
+
+    lines.extend(("", "CAPTURED BY AEGIS (passive fingerprinting)"))
+    if response is not None:
+        lines.extend(
+            (
+                f"HTTP endpoint: {response.url}",
+                f"HTTP status: {response.status_code}",
+                "",
+                "HTTP RESPONSE HEADERS",
+            )
+        )
+        for name, value in sorted(response.headers.items(), key=lambda item: item[0].lower()):
+            lines.append(f"{name}: {value}")
+    elif errors:
+        lines.append("HTTP probe errors:")
+        lines.extend(f"- {error}" for error in errors)
+
+    if banner:
+        lines.extend(("", "SERVICE BANNER", banner))
+    elif banner_error:
+        lines.extend(("", f"Service banner error: {banner_error}"))
+
+    if response is None and not errors and not banner and not banner_error:
+        lines.append("No passive HTTP or service-banner probe applies to this port.")
+
+    return "\n".join(lines)
+
+
 def run(target, target_type=None, port=443):
     print("=" * 50)
     print(" SERVER SOFTWARE")
@@ -599,6 +645,10 @@ def run(target, target_type=None, port=443):
     print("=" * 50)
 
     fingerprints = []
+    response = None
+    errors = []
+    banner = ""
+    banner_error = None
 
     print("\n[*] Passive Fingerprinting")
     if port not in NON_HTTP_PORTS:
@@ -612,12 +662,12 @@ def run(target, target_type=None, port=443):
                 print(f"    {error}")
 
     if port in BANNER_PORTS:
-        banner, error = read_service_banner(target, port)
+        banner, banner_error = read_service_banner(target, port)
         if banner:
             print(f"    Service banner: {' '.join(banner.split())[:240]}")
             fingerprints.extend(detect_from_banner(banner))
-        elif error:
-            warn(f"Unable to read a service banner: {error}")
+        elif banner_error:
+            warn(f"Unable to read a service banner: {banner_error}")
 
     fingerprints = merge_fingerprints(fingerprints)
 
@@ -628,7 +678,11 @@ def run(target, target_type=None, port=443):
         )
         print("    The service may suppress its banner or sit behind a reverse proxy.")
         print("\n" + "=" * 50)
-        return
+        return {
+            "evidence": format_server_software_evidence(
+                target, port, response, errors, banner, banner_error
+            )
+        }
 
     for fingerprint in fingerprints:
         version = fingerprint.version or "version unknown"
@@ -650,3 +704,8 @@ def run(target, target_type=None, port=443):
         warn(f"The local support catalogue is {catalogue_age} days old and should be reviewed")
     print(f"    Catalogue source: {CATALOG_SOURCE}")
     print("\n" + "=" * 50)
+    return {
+        "evidence": format_server_software_evidence(
+            target, port, response, errors, banner, banner_error
+        )
+    }

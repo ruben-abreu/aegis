@@ -77,6 +77,17 @@ class CertificateScannerTests(unittest.TestCase):
         with redirect_stdout(StringIO()):
             self.assertTrue(tls_certs.check_self_signed(self.cert))
 
+    def test_certificate_evidence_contains_reproduction_and_captured_fields(self):
+        evidence = tls_certs.format_certificate_evidence(
+            self.cert, "example.com", port=443, tls_version="TLSv1.3"
+        )
+
+        self.assertIn("openssl s_client -connect example.com:443", evidence)
+        self.assertIn("CAPTURED BY AEGIS", evidence)
+        self.assertIn("Negotiated protocol: TLSv1.3", evidence)
+        self.assertIn("DNS:example.com", evidence)
+        self.assertIn("DNS:*.example.org", evidence)
+
 
 if __name__ == "__main__":
     unittest.main()

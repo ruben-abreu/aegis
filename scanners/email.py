@@ -1,11 +1,42 @@
 import dns.resolver
 import base64
 import struct
+import shlex
 
-def check_spf(domain):
+
+def _record_dns_evidence(evidence, name, record_type, records=None, error=None):
+    if evidence is None:
+        return
+    evidence.append(f"$ dig {name} {record_type.lower()} +short")
+    if records:
+        evidence.extend(record.to_text() for record in records)
+    elif error:
+        evidence.append(f"Query error: {error}")
+    else:
+        evidence.append("No records returned")
+    evidence.append("")
+
+
+def format_email_evidence(domain, captured):
+    quoted_domain = shlex.quote(str(domain))
+    lines = [
+        "REPRODUCE MANUALLY",
+        f"$ dig {quoted_domain} txt +short",
+        f"$ dig _dmarc.{quoted_domain} txt +short",
+        f"$ dig selector._domainkey.{quoted_domain} txt +short",
+        f"$ dig {quoted_domain} mx +short",
+        "",
+        "CAPTURED BY AEGIS (DNS queries)",
+    ]
+    lines.extend(captured or ["No DNS evidence was captured."])
+    return "\n".join(lines).rstrip()
+
+
+def check_spf(domain, evidence=None):
     print("\n[*] Checking SPF Record against Bitsight Criteria...")
     try:
-        txt_records = dns.resolver.resolve(domain, 'TXT')
+        txt_records = list(dns.resolver.resolve(domain, 'TXT'))
+        _record_dns_evidence(evidence, domain, "TXT", txt_records)
         spf_record = None
         for record in txt_records:
             record_text = record.to_text().strip('"')
@@ -41,14 +72,16 @@ def check_spf(domain):
             print("    \033[91m[✗] Bitsight Rule Violation: Contains 'ptr' mechanism (Deprecated, slow, and insecure).\033[0m")
 
     except Exception as e:
+        _record_dns_evidence(evidence, domain, "TXT", error=e)
         print(f"    \033[91m[✗] Error fetching SPF record: {e}\033[0m")
 
 
-def check_dmarc(domain):
+def check_dmarc(domain, evidence=None):
     print("\n[*] Checking DMARC Record against Bitsight Criteria...")
     dmarc_domain = f"_dmarc.{domain}"
     try:
-        txt_records = dns.resolver.resolve(dmarc_domain, 'TXT')
+        txt_records = list(dns.resolver.resolve(dmarc_domain, 'TXT'))
+        _record_dns_evidence(evidence, dmarc_domain, "TXT", txt_records)
         dmarc_record = None
         for record in txt_records:
             record_text = record.to_text().strip('"')
@@ -88,7 +121,8 @@ def check_dmarc(domain):
         else:
             print("    \033[91m[✗] Bitsight Rule Violation: Missing 'rua' tag (DMARC runs blind without telemetry destination).")
 
-    except Exception:
+    except Exception as exc:
+        _record_dns_evidence(evidence, dmarc_domain, "TXT", error=exc)
         print("    \033[91m[✗] DMARC Record: NOT FOUND or could not be resolved.\033[0m")
 
 
@@ -149,7 +183,7 @@ def validate_dkim_content(record_text, selector_name):
     return True
 
 
-def check_dkim(domain, custom_selector=None, interactive=True):
+def check_dkim(domain, custom_selector=None, interactive=True, evidence=None):
     print("\n[*] Checking DKIM Record against BitSight Criteria...")
     common_selectors = ['default', 'google', 'k1', 'mail', 'sig1']
     found_any = False
@@ -158,14 +192,16 @@ def check_dkim(domain, custom_selector=None, interactive=True):
     for selector in common_selectors:
         dkim_domain = f"{selector}._domainkey.{domain}"
         try:
-            txt_records = dns.resolver.resolve(dkim_domain, 'TXT')
+            txt_records = list(dns.resolver.resolve(dkim_domain, 'TXT'))
+            _record_dns_evidence(evidence, dkim_domain, "TXT", txt_records)
             for record in txt_records:
                 record_text = record.to_text().strip('"')
                 if "v=DKIM1" in record_text or "p=" in record_text:
                     validate_dkim_content(record_text, selector)
                     found_any = True
                     break
-        except Exception:
+        except Exception as exc:
+            _record_dns_evidence(evidence, dkim_domain, "TXT", error=exc)
             continue
             
     if interactive and not custom_selector:
@@ -176,7 +212,8 @@ def check_dkim(domain, custom_selector=None, interactive=True):
         dkim_domain = f"{custom_selector}._domainkey.{domain}"
         print(f"    [*] Querying record for selector: '{custom_selector}'...")
         try:
-            txt_records = dns.resolver.resolve(dkim_domain, 'TXT')
+            txt_records = list(dns.resolver.resolve(dkim_domain, 'TXT'))
+            _record_dns_evidence(evidence, dkim_domain, "TXT", txt_records)
             custom_found = False
             for record in txt_records:
                 record_text = record.to_text().strip('"')
@@ -188,22 +225,40 @@ def check_dkim(domain, custom_selector=None, interactive=True):
             if not custom_found:
                 print(f"    \033[91m[✗] Record found for selector '{custom_selector}', but it does not contain a valid public key format.\033[0m")
         except Exception as e:
+            _record_dns_evidence(evidence, dkim_domain, "TXT", error=e)
             print(f"    \033[91m[✗] DKIM Selector '{custom_selector}' NOT FOUND or could not be resolved. ({e})\033[0m")
 
     if not found_any and not custom_selector:
         print("    \033[93m[!] DKIM Note: No active records discovered using standard common selectors.\033[0m")
 
 
+def collect_mx_evidence(domain, evidence):
+    """Capture MX records for diagnostics without adding a separate grade."""
+    try:
+        records = list(dns.resolver.resolve(domain, "MX"))
+        _record_dns_evidence(evidence, domain, "MX", records)
+    except Exception as exc:
+        _record_dns_evidence(evidence, domain, "MX", error=exc)
+
+
 def run(target, target_type=None, port=None, dkim_selector=None, interactive=True):
     if target_type == "IP Address":
         print("\n[!] Email security auditing (SPF/DKIM/DMARC) requires a Domain target, not an IP address.")
-        return
+        return {"evidence": format_email_evidence(target, [])}
 
     print("\n========================================")
     print(" E-MAIL SECURITY & BITSIGHT COMPLIANCE")
     print(f" Target: {target}")
     print("========================================")
 
-    check_spf(target)
-    check_dmarc(target)
-    check_dkim(target, custom_selector=dkim_selector, interactive=interactive)
+    evidence = []
+    check_spf(target, evidence=evidence)
+    check_dmarc(target, evidence=evidence)
+    check_dkim(
+        target,
+        custom_selector=dkim_selector,
+        interactive=interactive,
+        evidence=evidence,
+    )
+    collect_mx_evidence(target, evidence)
+    return {"evidence": format_email_evidence(target, evidence)}

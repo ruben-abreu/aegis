@@ -2,6 +2,7 @@ import ssl
 import socket
 import requests
 import subprocess
+import shlex
 
 _sslscan_cache = {}
 
@@ -45,6 +46,81 @@ STRONG_CIPHERS = [
     "ECDHE-ECDSA-AES256-GCM-SHA384",
     "ECDHE-RSA-CHACHA20-POLY1305",
 ]
+
+
+def _openssl_authority(host, port):
+    host = str(host)
+    authority = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+    return shlex.quote(authority)
+
+
+def capture_tls_handshake(host, port=443):
+    """Capture the negotiated values used as raw evidence in the web UI."""
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+
+    with socket.create_connection((host, port), timeout=10) as sock:
+        with context.wrap_socket(sock, server_hostname=host) as ssock:
+            cipher = ssock.cipher() or ("Unknown", "Unknown", 0)
+            session = getattr(ssock, "session", None)
+            return {
+                "protocol": ssock.version() or "Unknown",
+                "cipher": cipher[0],
+                "cipher_protocol": cipher[1],
+                "cipher_bits": cipher[2],
+                "compression": ssock.compression() or "None",
+                "session_ticket": bool(session and session.has_ticket),
+            }
+
+
+def format_tls_config_evidence(
+    host, port=443, handshake=None, sslscan_raw=None, error=None
+):
+    """Format actual TLS probe values without presenting them as OpenSSL output."""
+    authority = _openssl_authority(host, port)
+    server_name = shlex.quote(str(host))
+    sslscan_command = (
+        f"sslscan {shlex.quote(str(host))}"
+        if port == 443
+        else f"sslscan --port {port} {shlex.quote(str(host))}"
+    )
+    lines = [
+        "REPRODUCE MANUALLY",
+        (
+            f"$ openssl s_client -connect {authority} -servername {server_name} "
+            "-brief </dev/null"
+        ),
+        f"$ {sslscan_command}",
+        "",
+        "CAPTURED BY AEGIS (Python TLS handshake)",
+        f"Endpoint: {host}:{port}",
+    ]
+
+    if handshake:
+        lines.extend(
+            (
+                f"Negotiated protocol: {handshake['protocol']}",
+                f"Negotiated cipher: {handshake['cipher']}",
+                f"Cipher protocol: {handshake['cipher_protocol']}",
+                f"Cipher strength: {handshake['cipher_bits']} bits",
+                f"TLS compression: {handshake['compression']}",
+                (
+                    "Session ticket on initial handshake: "
+                    f"{'yes' if handshake['session_ticket'] else 'no'}"
+                ),
+            )
+        )
+    elif error:
+        lines.append(f"Handshake error: {error}")
+
+    lines.extend(("", "RAW SSLSCAN OUTPUT"))
+    if sslscan_raw:
+        lines.append(sslscan_raw.strip())
+    else:
+        lines.append("Not captured. Extended cipher and TLS checks were not run or sslscan failed.")
+
+    return "\n".join(lines)
 
 def check_tls_versions(host, port=443):
     print("\n[*] TLS Version Support")
@@ -375,10 +451,14 @@ def run(target, target_type=None, port=443, check_ciphers=None, interactive=True
     print("=" * 40)
 
     try:
-        socket.create_connection((target, port), timeout=5).close()
-    except (socket.error, TimeoutError):
+        handshake = capture_tls_handshake(target, port)
+    except (OSError, ssl.SSLError, TimeoutError) as exc:
         bad(f"Unable to connect to {target}:{port}")
-        return
+        return {
+            "evidence": format_tls_config_evidence(
+                target, port=port, error=str(exc)
+            )
+        }
 
     print(f"\n[+] Connection successful")
 
@@ -394,7 +474,8 @@ def run(target, target_type=None, port=443, check_ciphers=None, interactive=True
     check_protocol_downgrade_protection(target, port)
 
     print("\n[*] Extended Cipher and TLS Version Scan")
-    if should_check_ciphers(check_ciphers, interactive):
+    run_extended = should_check_ciphers(check_ciphers, interactive)
+    if run_extended:
         print("    Running sslscan checks; this may take up to a minute...")
         check_cipher_suites(target, port)
         check_dh_strength(target, port)
@@ -404,3 +485,11 @@ def run(target, target_type=None, port=443, check_ciphers=None, interactive=True
         warn("Extended cipher, DH and TLS version checks skipped")
 
     print("\n" + "=" * 40)
+    return {
+        "evidence": format_tls_config_evidence(
+            target,
+            port=port,
+            handshake=handshake,
+            sslscan_raw=_sslscan_cache.get((target, port)) if run_extended else None,
+        )
+    }

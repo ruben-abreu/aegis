@@ -4,6 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import re
+import shlex
 from urllib.parse import urlparse
 
 GREEN="\033[92m"; RED="\033[91m"; YELLOW="\033[93m"; BOLD="\033[1m"; END="\033[0m"
@@ -20,6 +21,46 @@ HEADERS=[
 ("Referrer-Policy","Missing Referrer-Policy"),
 ("Permissions-Policy","Missing Permissions-Policy"),
 ]
+
+
+def format_was_evidence(response, requested_url):
+    """Format the HTTP transcript captured by Aegis plus team reference commands."""
+    quoted_url = shlex.quote(requested_url)
+    lines = [
+        "REPRODUCE MANUALLY",
+        f"$ curl -IL -k {quoted_url}",
+        f"$ wget -S --spider {quoted_url}",
+        "",
+        "CAPTURED BY AEGIS (HTTP request)",
+        f"Requested URL: {requested_url}",
+    ]
+
+    if response is None:
+        lines.append("No HTTP response was captured.")
+        return "\n".join(lines)
+
+    request = getattr(response, "request", None)
+    if request is not None:
+        lines.append(f"Request: {getattr(request, 'method', 'GET')} {request.url}")
+        request_headers = getattr(request, "headers", {})
+        for name, value in request_headers.items():
+            lines.append(f"> {name}: {value}")
+
+    lines.extend(("", "REDIRECT CHAIN"))
+    chain = [*getattr(response, "history", []), response]
+    for item in chain:
+        location = item.headers.get("Location")
+        line = f"{item.status_code} {item.url}"
+        if location:
+            line += f" -> {location}"
+        lines.append(line)
+
+    lines.extend(("", "FINAL RESPONSE HEADERS"))
+    lines.append(f"HTTP status: {response.status_code}")
+    for name, value in sorted(response.headers.items(), key=lambda item: item[0].lower()):
+        lines.append(f"{name}: {value}")
+
+    return "\n".join(lines)
 
 def fetch(url):
     try:
@@ -361,15 +402,17 @@ def run(target, port=443):
     print(f" Target: {target}")
     print("=" * 40)
 
-    r = fetch(primary_url)
+    requested_url = primary_url
+    r = fetch(requested_url)
 
     if r is None:
         print(f"[*] Primary connection failed, trying {fallback_url}...")
-        r = fetch(fallback_url)
+        requested_url = fallback_url
+        r = fetch(requested_url)
 
     if r is None:
         bad("Unable to connect to the target.")
-        return
+        return {"evidence": format_was_evidence(None, requested_url)}
 
     print(f"\n[+] Connected successfully")
     print(f"Resolved URL: {r.url}")
@@ -390,3 +433,4 @@ def run(target, port=443):
     check_js(r)
     check_sri(r)
     #fingerprint(r)
+    return {"evidence": format_was_evidence(r, requested_url)}

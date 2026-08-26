@@ -118,12 +118,14 @@ class ScannerOutputTests(unittest.TestCase):
         output = StringIO()
 
         with redirect_stdout(output):
-            run("example.com", port=443)
+            result = run("example.com", port=443)
 
         report = output.getvalue()
         self.assertIn("Detected: Apache 2.4.68", report)
         self.assertIn("GOOD: Apache 2.4.68", report)
         self.assertIn("Catalogue source:", report)
+        self.assertIn("nmap -sV --script=http-headers", result["evidence"])
+        self.assertIn("Server: Apache/2.4.68", result["evidence"])
 
 
 if __name__ == "__main__":

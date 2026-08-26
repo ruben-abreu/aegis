@@ -102,13 +102,16 @@ def index():
 def get_scanners():
     return jsonify([{'id': key, 'label': label} for key, label in SCANNERS])
 
-def save_scan(scan_id, target, scanner, extracted_port, output, status):
+def save_scan(
+    scan_id, target, scanner, extracted_port, output, status, evidence=""
+):
     results = {
         'target': target,
         'scanner': scanner,
         'port': extracted_port,
         'timestamp': datetime.now().isoformat(),
-        'output': output
+        'output': output,
+        'evidence': ANSI_ESCAPE.sub('', evidence or ''),
     }
 
     conn = sqlite3.connect(DB_FILE)
@@ -124,29 +127,34 @@ def run_scan_thread(
     scan_id, target, scanner, extracted_port, output_stream, check_ciphers=False
 ):
     try:
+        scanner_result = None
         with redirect_stdout(output_stream), redirect_stderr(output_stream):
             if scanner == 'was':
-                was.run(target, port=extracted_port)
+                scanner_result = was.run(target, port=extracted_port)
             elif scanner == 'server_software':
-                server_software.run(target, port=extracted_port)
+                scanner_result = server_software.run(target, port=extracted_port)
             elif scanner == 'tls_config':
-                tls_config.run(
+                scanner_result = tls_config.run(
                     target,
                     port=extracted_port,
                     check_ciphers=check_ciphers,
                     interactive=False,
                 )
             elif scanner == 'tls_certs':
-                tls_certs.run(target, port=extracted_port)
+                scanner_result = tls_certs.run(target, port=extracted_port)
             elif scanner == 'ports':
-                ports.run(target, port=extracted_port)
+                scanner_result = ports.run(target, port=extracted_port)
             elif scanner == 'email':
-                email.run(target, interactive=False)
+                scanner_result = email.run(target, interactive=False)
             else:
                 raise ValueError(f"Unknown scanner: {scanner}")
 
+        evidence = ''
+        if isinstance(scanner_result, dict):
+            evidence = str(scanner_result.get('evidence', '') or '')
+
         save_scan(scan_id, target, scanner, extracted_port,
-                  output_stream.get_output(), 'completed')
+                  output_stream.get_output(), 'completed', evidence=evidence)
         active_scans[scan_id]['status'] = 'completed'
 
     except Exception as e:
@@ -199,7 +207,19 @@ def start_scan():
         c = conn.cursor()
         c.execute(
             'INSERT INTO scans (target, scanner, results, status) VALUES (?, ?, ?, ?)',
-            (target, scanner, json.dumps({'target': target, 'scanner': scanner, 'port': extracted_port, 'timestamp': datetime.now().isoformat(), 'output': ''}), 'running')
+            (
+                target,
+                scanner,
+                json.dumps({
+                    'target': target,
+                    'scanner': scanner,
+                    'port': extracted_port,
+                    'timestamp': datetime.now().isoformat(),
+                    'output': '',
+                    'evidence': '',
+                }),
+                'running',
+            )
         )
         scan_id = c.lastrowid
         conn.commit()
@@ -410,6 +430,7 @@ def export_scan(scan_id):
     target, scanner, timestamp, results_json, status = row
     results = json.loads(results_json)
     raw_output = ANSI_ESCAPE.sub('', results.get('output', ''))
+    evidence = ANSI_ESCAPE.sub('', results.get('evidence', ''))
     port = results.get('port')
     risk_vector = SCANNER_LABELS.get(scanner, scanner)
 
@@ -432,6 +453,7 @@ def export_scan(scan_id):
             'summary': counts,
             'findings': findings,
             'raw_output': raw_output,
+            'technical_evidence': evidence,
         }
         body = json.dumps(payload, indent=2, ensure_ascii=False)
         mimetype = 'application/json'
@@ -447,6 +469,14 @@ def export_scan(scan_id):
             + "=" * 68 + "\n\n"
         )
         body = header + raw_output.rstrip() + "\n"
+        if evidence:
+            body += (
+                "\n" + "=" * 68 + "\n"
+                "TECHNICAL EVIDENCE\n"
+                + "=" * 68 + "\n"
+                + evidence.rstrip()
+                + "\n"
+            )
         mimetype = 'text/plain'
 
     return Response(

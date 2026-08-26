@@ -2,19 +2,47 @@ import dns.resolver
 import urllib.request
 import json
 import os
+import shlex
 
 VT_API_KEY = os.getenv("VT_API_KEY")
 
+
+def format_dns_evidence(target, target_type, captured):
+    quoted_target = shlex.quote(str(target))
+    lines = ["REPRODUCE MANUALLY"]
+    if target_type == "Domain":
+        lines.extend(
+            (
+                f"$ dig {quoted_target} A +short",
+                f"$ dig {quoted_target} AAAA +short",
+                f"$ dig {quoted_target} NS +short",
+                f"$ dig {quoted_target} +dnssec +multi",
+            )
+        )
+    else:
+        lines.append(f"$ whois {quoted_target}")
+        lines.append(
+            "$ curl 'https://www.virustotal.com/api/v3/ip_addresses/"
+            f"{quoted_target}/resolutions?limit=40' -H 'x-apikey: <API_TOKEN>'"
+        )
+    lines.extend(("", "CAPTURED BY AEGIS", *(captured or ["No DNS evidence was captured."])))
+    return "\n".join(lines)
+
 def run(target, target_type=None, port=None):
+    evidence = []
     if target_type == "Domain":
         print(f"\n[*] Mapping Active Records to the Domain {target}...")
         try:
-            answers = dns.resolver.resolve(target, 'A')
+            answers = list(dns.resolver.resolve(target, 'A'))
             print(f"\n[+] Active DNS Records Found for {target}:")
             for rdata in answers:
-                print(f"    -> IP Address (A Record): \033[1m{rdata.to_text()}\033[0m")
+                address = rdata.to_text()
+                evidence.append(f"A {target} -> {address}")
+                print(f"    -> IP Address (A Record): \033[1m{address}\033[0m")
         except Exception as e:
+            evidence.append(f"A query error for {target}: {e}")
             print(f"[!] Error resolving domain: {e}")
+        return {"evidence": format_dns_evidence(target, target_type, evidence)}
 
     elif target_type == "IP Address":
         print(f"\n[*] Starting pDNS Graph validation for IP: {target}...")
@@ -51,7 +79,8 @@ def run(target, target_type=None, port=None):
             print("[!] VirusTotal API key not found.\n"
                   "    Create a .env file in the project root containing:\n"
                   "    VT_API_KEY=your_api_key")
-            return
+            evidence.append("VirusTotal pDNS query not run: API key not configured")
+            return {"evidence": format_dns_evidence(target, target_type, evidence)}
 
         filtered_domains = set()
         
@@ -81,9 +110,16 @@ def run(target, target_type=None, port=None):
             print(f"\n[+] Success pDNS Graph: Evaluated {page} API pages. Found \033[1m{len(filtered_domains)}\033[0m unique targets:")
             
             for host in display_domains:
+                evidence.append(f"Passive DNS hostname: {host}")
                 print(f"    -> Associated Target: \033[1m{host}\033[0m")
                 
             if len(filtered_domains) > terminal_limit:
                 print(f"    \033[93m... and {len(filtered_domains) - terminal_limit} more corporate targets discovered but omitted for terminal clarity.\033[0m")
         else:
+            evidence.append(
+                f"No corporate passive-DNS hostname remained after filtering for {target}"
+            )
             print(f"\n[!] Result: No real corporate domain found for the IP {target} (Filtered across all fetched pages).")
+        return {"evidence": format_dns_evidence(target, target_type, evidence)}
+
+    return {"evidence": format_dns_evidence(target, target_type, evidence)}

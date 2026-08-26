@@ -2,8 +2,10 @@ let scanners = {};
 let currentScanId = null; // scan shown in the results pane
 let activeScanId = null; // scan still running, followed until it finishes
 let pollInterval = null;
+let currentEvidence = '';
 
 const SCAN_POLL_MS = 500;
+const EVIDENCE_VISIBLE_KEY = 'technicalEvidenceVisible';
 
 document.addEventListener('DOMContentLoaded', () => {
   initDarkMode();
@@ -225,6 +227,8 @@ async function clearHistory() {
     stopScanPolling();
     document.getElementById('resultsDisplay').innerHTML =
       '<p class="loading">Run a scan to see results</p>';
+    document.getElementById('resultsDisplay').classList.remove('has-evidence');
+    currentEvidence = '';
     showToast(`Deleted ${deleted} scan(s)`, 'success');
     loadScans();
   } catch (error) {
@@ -255,6 +259,8 @@ function setupFormHandler() {
 
     try {
       const resultsDisplay = document.getElementById('resultsDisplay');
+      resultsDisplay.classList.remove('has-evidence');
+      currentEvidence = '';
       resultsDisplay.innerHTML = '<p class="loading">Scan starting...</p>';
 
       const response = await fetch('/api/scan', {
@@ -299,6 +305,8 @@ function startPolling(scanId) {
       // so its status chip still updates when it finishes.
       if (currentScanId === scanId) {
         const resultsDisplay = document.getElementById('resultsDisplay');
+        resultsDisplay.classList.remove('has-evidence');
+        currentEvidence = '';
         resultsDisplay.innerHTML = `
                 <div style="margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 10px; color: #9cdcfe;">
                     <strong>Status:</strong> ${data.status === 'running' ? '⏳ Running...' : '✓ Completed'}
@@ -334,7 +342,41 @@ async function viewScan(scanId) {
 
     const resultsDisplay = document.getElementById('resultsDisplay');
 
-    const colorizedOutput = colorizeOutput(scan.results.output);
+    const colorizedOutput = colorizeOutput(scan.results.output || '');
+    const evidence = scan.results.evidence || '';
+    const hasEvidence = evidence.trim().length > 0;
+    const evidenceVisible =
+      hasEvidence && localStorage.getItem(EVIDENCE_VISIBLE_KEY) === 'true';
+    currentEvidence = evidence;
+    resultsDisplay.classList.toggle('has-evidence', hasEvidence);
+
+    const resultBody = hasEvidence
+      ? `
+            <div class="result-tabs" role="tablist" aria-label="Result view">
+                <button class="result-tab${evidenceVisible ? '' : ' active'}" role="tab"
+                    aria-selected="${String(!evidenceVisible)}"
+                    onclick="setResultPane('assessment', this)">Assessment</button>
+                <button class="result-tab${evidenceVisible ? ' active' : ''}" role="tab"
+                    aria-selected="${String(evidenceVisible)}"
+                    onclick="setResultPane('evidence', this)">Technical Evidence</button>
+            </div>
+            <div class="results-workspace${evidenceVisible ? ' evidence-open' : ''}">
+                <section class="result-pane assessment-pane${evidenceVisible ? ' mobile-hidden' : ''}"
+                    data-result-pane="assessment">
+                    <div class="pane-heading">Assessment</div>
+                    <div>${colorizedOutput}</div>
+                </section>
+                <section class="result-pane evidence-pane${evidenceVisible ? '' : ' mobile-hidden'}"
+                    data-result-pane="evidence">
+                    <div class="pane-heading evidence-heading">
+                        <span>Technical Evidence</span>
+                        <button class="btn-copy-evidence" onclick="copyEvidence()">Copy</button>
+                    </div>
+                    <pre class="evidence-output">${escapeHtml(evidence)}</pre>
+                </section>
+            </div>
+        `
+      : `<div>${colorizedOutput}</div>`;
 
     resultsDisplay.innerHTML = `
             <div class="results-header">
@@ -344,15 +386,57 @@ async function viewScan(scanId) {
                     <strong>Status:</strong> ${escapeHtml(scan.status)}
                 </div>
                 <div class="export-buttons">
+                    ${
+                      hasEvidence
+                        ? `<button class="btn-evidence-toggle"
+                              aria-expanded="${String(evidenceVisible)}"
+                              onclick="toggleTechnicalEvidence(this)">${
+                                evidenceVisible ? 'Hide Evidence' : 'View Evidence'
+                              }</button>`
+                        : ''
+                    }
                     <button class="btn-export" onclick="exportScan(${scanId}, 'txt')">Export TXT</button>
                     <button class="btn-export" onclick="exportScan(${scanId}, 'json')">Export JSON</button>
                 </div>
             </div>
-            <div>${colorizedOutput}</div>
+            ${resultBody}
         `;
   } catch (error) {
     console.error('Error loading scan:', error);
     showToast('Error loading scan', 'error');
+  }
+}
+
+function toggleTechnicalEvidence(button) {
+  const workspace = document.querySelector('#resultsDisplay .results-workspace');
+  if (!workspace) return;
+
+  const isOpen = workspace.classList.toggle('evidence-open');
+  localStorage.setItem(EVIDENCE_VISIBLE_KEY, String(isOpen));
+  button.setAttribute('aria-expanded', String(isOpen));
+  button.textContent = isOpen ? 'Hide Evidence' : 'View Evidence';
+}
+
+function setResultPane(paneName, selectedButton) {
+  const resultsDisplay = document.getElementById('resultsDisplay');
+  localStorage.setItem(EVIDENCE_VISIBLE_KEY, String(paneName === 'evidence'));
+  resultsDisplay.querySelectorAll('.result-pane').forEach(pane => {
+    pane.classList.toggle('mobile-hidden', pane.dataset.resultPane !== paneName);
+  });
+  resultsDisplay.querySelectorAll('.result-tab').forEach(button => {
+    const selected = button === selectedButton;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-selected', String(selected));
+  });
+}
+
+async function copyEvidence() {
+  try {
+    await navigator.clipboard.writeText(currentEvidence);
+    showToast('Technical evidence copied', 'success');
+  } catch (error) {
+    console.error('Error copying technical evidence:', error);
+    showToast('Unable to copy technical evidence', 'error');
   }
 }
 
@@ -381,9 +465,12 @@ async function deleteScan(event, scanId) {
         activeScanId = null;
       }
       if (currentScanId === scanId) {
-        document.getElementById('resultsDisplay').innerHTML =
+        const resultsDisplay = document.getElementById('resultsDisplay');
+        resultsDisplay.classList.remove('has-evidence');
+        resultsDisplay.innerHTML =
           '<p class="loading">Run a scan to see results</p>';
         currentScanId = null;
+        currentEvidence = '';
       }
       loadScans();
     } else {

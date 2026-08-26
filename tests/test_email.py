@@ -64,6 +64,19 @@ class EmailSecurityTests(unittest.TestCase):
         check_spf.assert_not_called()
         self.assertIn("requires a Domain target", output.getvalue())
 
+    @patch("scanners.email.dns.resolver.resolve")
+    def test_dns_record_is_preserved_as_technical_evidence(self, resolve):
+        resolve.return_value = [TxtRecord("v=spf1 -all")]
+        evidence = []
+
+        with redirect_stdout(StringIO()):
+            email.check_spf("example.com", evidence=evidence)
+
+        transcript = email.format_email_evidence("example.com", evidence)
+        self.assertIn("dig example.com txt +short", transcript)
+        self.assertIn('"v=spf1 -all"', transcript)
+        self.assertIn("dig example.com mx +short", transcript)
+
 
 if __name__ == "__main__":
     unittest.main()

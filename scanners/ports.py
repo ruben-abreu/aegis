@@ -1,5 +1,6 @@
 import socket
 import smtplib
+import shlex
 
 GREEN="\033[92m"; RED="\033[91m"; YELLOW="\033[93m"; BOLD="\033[1m"; END="\033[0m"
 
@@ -20,6 +21,16 @@ UDP_PORTS = {
 }
 
 SMTP_STARTTLS_PORTS = {25, 587}
+
+STARTTLS_PROTOCOLS = {
+    21: "ftp",
+    25: "smtp",
+    110: "pop3",
+    143: "imap",
+    587: "smtp",
+}
+
+IMPLICIT_TLS_PORTS = {465, 993, 995}
 
 PORT_DEFINITIONS = {
     "Web Services": {
@@ -130,7 +141,7 @@ def _smtp_text(value):
     return " ".join(str(value).split())
 
 
-def check_smtp_starttls(host, port, timeout=7):
+def check_smtp_starttls(host, port, timeout=7, evidence=None):
     """Use EHLO to determine whether an SMTP service advertises STARTTLS.
 
     No mail transaction is attempted. Port 465 is deliberately excluded by
@@ -141,6 +152,8 @@ def check_smtp_starttls(host, port, timeout=7):
 
     try:
         greeting_code, greeting = smtp.connect(host, port)
+        if evidence is not None:
+            evidence.append(f"SMTP greeting: {greeting_code} {_smtp_text(greeting)}")
         if greeting_code != 220:
             warn(
                 f"SMTP service returned greeting code {greeting_code}; "
@@ -150,6 +163,8 @@ def check_smtp_starttls(host, port, timeout=7):
 
         print(f"    Banner: {_smtp_text(greeting)}")
         ehlo_code, ehlo_response = smtp.ehlo("aegis.local")
+        if evidence is not None:
+            evidence.append(f"EHLO response: {ehlo_code} {_smtp_text(ehlo_response)}")
         if ehlo_code != 250:
             warn(
                 f"SMTP EHLO returned code {ehlo_code}; STARTTLS support "
@@ -158,9 +173,13 @@ def check_smtp_starttls(host, port, timeout=7):
             return None
 
         if smtp.has_extn("starttls"):
+            if evidence is not None:
+                evidence.append("STARTTLS capability advertised: yes")
             ok(f"STARTTLS advertised on port {port}")
             return True
 
+        if evidence is not None:
+            evidence.append("STARTTLS capability advertised: no")
         bad(
             f"STARTTLS NOT advertised on port {port}; SMTP transport is "
             "plaintext-only"
@@ -170,6 +189,8 @@ def check_smtp_starttls(host, port, timeout=7):
         return False
 
     except (OSError, smtplib.SMTPException) as exc:
+        if evidence is not None:
+            evidence.append(f"SMTP probe error: {exc}")
         warn(f"Unable to determine SMTP STARTTLS support: {exc}")
         return None
     finally:
@@ -177,6 +198,47 @@ def check_smtp_starttls(host, port, timeout=7):
             smtp.quit()
         except (OSError, smtplib.SMTPException):
             smtp.close()
+
+
+def format_port_evidence(
+    target, port, protocol, is_open, service=None, category=None, smtp_evidence=None
+):
+    """Return the socket result and team reference commands for this service."""
+    host = shlex.quote(str(target))
+    udp_flag = " -u" if protocol == "udp" else ""
+    nmap_scan = "-sU " if protocol == "udp" else ""
+    lines = [
+        "REPRODUCE MANUALLY",
+        f"$ nc -z -n -v{udp_flag} {host} {port}",
+        f"$ nmap {nmap_scan}-Pn -p {port} {host}",
+    ]
+
+    starttls_protocol = STARTTLS_PROTOCOLS.get(port)
+    if starttls_protocol:
+        lines.append(
+            f"$ openssl s_client -starttls {starttls_protocol} -connect {host}:{port}"
+        )
+    elif port in IMPLICIT_TLS_PORTS:
+        lines.append(f"$ openssl s_client -connect {host}:{port}")
+
+    lines.extend(
+        (
+            "",
+            "CAPTURED BY AEGIS (socket probe)",
+            f"Endpoint: {target}:{port}/{protocol}",
+            f"Service: {service or 'unknown'}",
+            f"Category: {category or 'unknown'}",
+        )
+    )
+    if protocol == "udp" and is_open:
+        lines.append("Result: OPEN or filtered (no UDP rejection received)")
+    else:
+        lines.append(f"Result: {'OPEN' if is_open else 'CLOSED or filtered'}")
+
+    if smtp_evidence:
+        lines.extend(("", "SMTP EHLO TRANSCRIPT", *smtp_evidence))
+
+    return "\n".join(lines)
 
 def run(target, target_type=None, port=None):
     print("=" * 50)
@@ -187,7 +249,7 @@ def run(target, target_type=None, port=None):
 
     if not port:
         bad("No port specified")
-        return
+        return {"evidence": "No port evidence was captured because no port was supplied."}
 
     protocol = "tcp"
     port_num = port
@@ -206,16 +268,33 @@ def run(target, target_type=None, port=None):
 
     is_open = test_port(target, port_num, protocol=protocol, timeout=5)
     service, category = get_port_service(port_num)
+    smtp_evidence = []
 
     if is_open:
-        if service:
+        if protocol == "udp":
+            warn(
+                f"Port {port_num}/UDP is OPEN or filtered"
+                + (f" - {service} ({category})" if service else "")
+            )
+        elif service:
             ok(f"Port {port_num}/{protocol.upper()} is OPEN - {service} ({category})")
         else:
             ok(f"Port {port_num}/{protocol.upper()} is OPEN - Unknown service")
 
         if protocol == "tcp" and port_num in SMTP_STARTTLS_PORTS:
-            check_smtp_starttls(target, port_num)
+            check_smtp_starttls(target, port_num, evidence=smtp_evidence)
     else:
         bad(f"Port {port_num}/{protocol.upper()} is CLOSED or filtered")
 
     print("\n" + "=" * 50)
+    return {
+        "evidence": format_port_evidence(
+            target,
+            port_num,
+            protocol,
+            is_open,
+            service,
+            category,
+            smtp_evidence,
+        )
+    }

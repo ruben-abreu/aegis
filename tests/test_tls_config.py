@@ -2,7 +2,7 @@ import unittest
 from contextlib import ExitStack, redirect_stdout
 from io import StringIO
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from scanners import tls_config
 
@@ -10,6 +10,17 @@ from scanners import tls_config
 class TlsConfigurationTests(unittest.TestCase):
     def setUp(self):
         tls_config.reset_sslscan_cache()
+
+    @staticmethod
+    def _handshake():
+        return {
+            "protocol": "TLSv1.3",
+            "cipher": "TLS_AES_256_GCM_SHA384",
+            "cipher_protocol": "TLSv1.3",
+            "cipher_bits": 256,
+            "compression": "None",
+            "session_ticket": True,
+        }
 
     @patch("scanners.tls_config.subprocess.run")
     def test_sslscan_output_is_cached_per_target(self, subprocess_run):
@@ -61,9 +72,12 @@ class TlsConfigurationTests(unittest.TestCase):
         )
 
         with ExitStack() as stack:
-            connection = Mock()
             stack.enter_context(
-                patch("scanners.tls_config.socket.create_connection", return_value=connection)
+                patch.object(
+                    tls_config,
+                    "capture_tls_handshake",
+                    return_value=self._handshake(),
+                )
             )
             for name in check_names:
                 stack.enter_context(
@@ -84,7 +98,11 @@ class TlsConfigurationTests(unittest.TestCase):
     def test_declining_extended_checks_skips_sslscan_checks(self):
         with ExitStack() as stack:
             stack.enter_context(
-                patch("scanners.tls_config.socket.create_connection", return_value=Mock())
+                patch.object(
+                    tls_config,
+                    "capture_tls_handshake",
+                    return_value=self._handshake(),
+                )
             )
             for name in (
                 "check_forward_secrecy",
@@ -107,6 +125,19 @@ class TlsConfigurationTests(unittest.TestCase):
         cipher.assert_not_called()
         dh.assert_not_called()
         versions.assert_not_called()
+
+    def test_configuration_evidence_includes_handshake_and_raw_sslscan(self):
+        evidence = tls_config.format_tls_config_evidence(
+            "example.com",
+            port=443,
+            handshake=self._handshake(),
+            sslscan_raw="TLSv1.3 enabled\nTLSv1.0 disabled",
+        )
+
+        self.assertIn("openssl s_client -connect example.com:443", evidence)
+        self.assertIn("Negotiated cipher: TLS_AES_256_GCM_SHA384", evidence)
+        self.assertIn("RAW SSLSCAN OUTPUT", evidence)
+        self.assertIn("TLSv1.0 disabled", evidence)
 
 
 if __name__ == "__main__":

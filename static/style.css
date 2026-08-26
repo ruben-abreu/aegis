@@ -815,6 +815,135 @@ footer {
   font-weight: bold;
 }
 
+/* Scans keep the readable assessment and the probe evidence separate.
+   Each pane scrolls independently, so a long sslscan transcript never pushes
+   the assessment off screen. */
+.results-output.has-evidence {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.results-output.has-evidence .results-header {
+  flex: 0 0 auto;
+}
+
+.result-tabs {
+  display: none;
+}
+
+.results-workspace {
+  flex: 1 1 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0fr);
+  gap: 0;
+  transition: grid-template-columns 0.28s ease;
+}
+
+.results-workspace.evidence-open {
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+}
+
+.result-pane {
+  min-width: 0;
+  overflow: auto;
+  padding: 0 18px 8px 0;
+}
+
+.evidence-pane {
+  overflow: hidden;
+  border-left: 0 solid transparent;
+  padding: 0;
+  background: rgba(0, 0, 0, 0.14);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.18s ease,
+    padding 0.28s ease,
+    border-color 0.28s ease;
+}
+
+.results-workspace.evidence-open .evidence-pane {
+  overflow: auto;
+  border-left: 1px solid #444;
+  padding: 0 4px 8px 18px;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.pane-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 2px 0 10px;
+  margin-bottom: 8px;
+  color: #d7e9f7;
+  background: var(--results-bg);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.evidence-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #1a1a1a;
+}
+
+.evidence-output {
+  margin: 0;
+  color: #c9d1d9;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.btn-copy-evidence {
+  border: 1px solid #4f6475;
+  border-radius: 4px;
+  padding: 4px 9px;
+  background: transparent;
+  color: #b9d8ee;
+  font-family: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.btn-copy-evidence:hover {
+  border-color: #7fb4d8;
+  background: rgba(127, 180, 216, 0.12);
+}
+
+.btn-evidence-toggle {
+  border: 1px solid #55758d;
+  border-radius: 4px;
+  padding: 6px 14px;
+  background: transparent;
+  color: #b9d8ee;
+  font-family: inherit;
+  font-size: 0.85em;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    border-color 0.2s;
+}
+
+.btn-evidence-toggle:hover,
+.btn-evidence-toggle[aria-expanded='true'] {
+  border-color: #7fb4d8;
+  background: rgba(127, 180, 216, 0.14);
+}
+
 .aegis-logo {
   width: 32px;
   height: 32px;
@@ -890,6 +1019,64 @@ header h1 {
 }
 
 @media (max-width: 768px) {
+  .result-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    margin-bottom: 12px;
+    padding: 4px;
+    border-radius: 7px;
+    background: #111111;
+  }
+
+  .btn-evidence-toggle {
+    display: none;
+  }
+
+  .result-tab {
+    border: 0;
+    border-radius: 5px;
+    padding: 8px 6px;
+    background: transparent;
+    color: #8fa4b4;
+    font-family: inherit;
+    font-size: 0.76rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .result-tab.active {
+    background: #2d5f8a;
+    color: #ffffff;
+  }
+
+  .results-workspace,
+  .results-workspace.evidence-open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .result-pane {
+    padding: 0 2px 8px;
+  }
+
+  .evidence-pane,
+  .results-workspace.evidence-open .evidence-pane {
+    border-left: 0;
+    padding: 0 2px 8px;
+    background: transparent;
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+  }
+
+  .result-pane.mobile-hidden {
+    display: none;
+  }
+
+  .assessment-pane .pane-heading {
+    display: none;
+  }
+
   .scan-panel form {
     display: block;
     padding-bottom: 0;

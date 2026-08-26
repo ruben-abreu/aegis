@@ -124,6 +124,13 @@ Scan results can be exported for sharing from the results panel:
   section and a severity (`pass`, `fail`, `warning`, `info`, `detail`), and a
   severity count. Finding text is never reworded.
 
+Every web scanner includes a separate Technical Evidence pane. It shows the
+team-reference commands that can reproduce the diagnosis beside the data Aegis
+actually captured: certificate fields, TLS handshakes and raw `sslscan` output,
+HTTP redirects and headers, socket results and SMTP transcripts, DNS email
+records, or software headers and service banners. The same evidence is included
+in TXT and JSON exports.
+
 Both are also reachable directly:
 
 ```
