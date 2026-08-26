@@ -65,15 +65,19 @@ def format_certificate_evidence(cert, host, port=443, tls_version=None):
         )
     )
 
-    public_key = cert.public_key()
-    if isinstance(public_key, rsa.RSAPublicKey):
-        lines.append(f"Public Key: RSA ({public_key.key_size} bits)")
-    elif isinstance(public_key, ec.EllipticCurvePublicKey):
-        lines.append(
-            f"Public Key: ECDSA ({public_key.curve.name}, {public_key.curve.key_size} bits)"
-        )
-    else:
-        lines.append(f"Public Key: {type(public_key).__name__}")
+    try:
+        public_key = cert.public_key()
+        if isinstance(public_key, rsa.RSAPublicKey):
+            lines.append(f"Public Key: RSA ({public_key.key_size} bits)")
+        elif isinstance(public_key, ec.EllipticCurvePublicKey):
+            lines.append(
+                f"Public Key: ECDSA ({public_key.curve.name}, "
+                f"{public_key.curve.key_size} bits)"
+            )
+        else:
+            lines.append(f"Public Key: {type(public_key).__name__}")
+    except (TypeError, ValueError) as exc:
+        lines.append(f"Public Key: unable to parse ({exc})")
 
     identities, _ = get_cert_identities(cert)
     lines.extend(("", "X509v3 Subject Alternative Name:"))
@@ -119,40 +123,48 @@ def cert_validity_dates(cert):
     return not_before, not_after
 
 def check_validity(cert):
-    print("\n[*] Certificate Validity")
+    """BitSight certificate finding for expiration only.
 
-    not_before, not_after = cert_validity_dates(cert)
+    Future issuance and total duration belong to TLS/SSL Configurations.
+    """
+    print("\n[*] Certificate Expiration")
+
+    _, not_after = cert_validity_dates(cert)
     now = datetime.now(timezone.utc)
-
-    if now < not_before:
-        bad(f"Certificate not yet valid (starts {not_before.strftime('%Y-%m-%d %H:%M:%S')})")
-        return False
 
     if now > not_after:
         bad(f"Certificate EXPIRED (expired {not_after.strftime('%Y-%m-%d %H:%M:%S')})")
         return False
 
-    ok(f"Valid from {not_before.strftime('%Y-%m-%d')} to {not_after.strftime('%Y-%m-%d')}")
+    ok(f"Certificate is not expired (expires {not_after.strftime('%Y-%m-%d')})")
+    return True
 
+
+def check_expiry_horizon(cert):
+    """Supplemental renewal warning; BitSight's listed finding is expiration."""
+    print("\n[*] Renewal Horizon")
+    _, not_after = cert_validity_dates(cert)
+    now = datetime.now(timezone.utc)
     validity_days = (not_after - now).days
 
     if validity_days < 30:
         warn(f"Certificate expires soon ({validity_days} days remaining)")
     elif validity_days < 90:
-        warn(f"Certificate expires in {validity_days} days (renew within 30 days)")
+        warn(f"Certificate expires in {validity_days} days; plan renewal")
     else:
         ok(f"Sufficient validity period ({validity_days} days remaining)")
-
-    validity_span = (not_after - not_before).days
-    if validity_span > 365:
-        warn(f"Certificate validity period is long ({validity_span} days). Prefer 1-year certificates.")
 
     return True
 
 def check_key_strength(cert):
-    print("\n[*] Key Strength & Algorithm")
+    """BitSight certificate thresholds for RSA public keys."""
+    print("\n[*] RSA Public Key Strength")
 
-    pubkey = cert.public_key()
+    try:
+        pubkey = cert.public_key()
+    except (TypeError, ValueError):
+        warn("Unable to parse RSA key; malformed public keys are assessed in Configuration")
+        return True
 
     if isinstance(pubkey, rsa.RSAPublicKey):
         key_size = pubkey.key_size
@@ -160,30 +172,35 @@ def check_key_strength(cert):
             ok(f"RSA Key: {key_size} bits (Strong)")
         elif key_size >= 2048:
             ok(f"RSA Key: {key_size} bits (Compliant)")
-        else:
-            bad(f"RSA Key: {key_size} bits (WEAK - Below 2048 bits minimum)")
+        elif key_size >= 1024:
+            warn(f"RSA public key is less than 2048 bits ({key_size})")
             return False
-
-    elif isinstance(pubkey, ec.EllipticCurvePublicKey):
-        key_size = pubkey.curve.key_size
-        if key_size >= 256:
-            ok(f"ECDSA Key: {key_size} bits (Strong)")
         else:
-            bad(f"ECDSA Key: {key_size} bits (WEAK - Below 256 bits minimum)")
+            bad(f"RSA public key is less than 1024 bits ({key_size})")
             return False
     else:
-        warn(f"Unsupported key type: {type(pubkey).__name__}")
-        return False
+        ok("No RSA certificate finding applies to this public key")
 
     return True
 
 def check_signature_algorithm(cert):
     print("\n[*] Signature Algorithm")
 
-    sig_algo = cert.signature_algorithm_oid._name
-    hash_algo = cert.signature_hash_algorithm
+    sig_algo = cert.signature_algorithm_oid._name or cert.signature_algorithm_oid.dotted_string
+    try:
+        hash_algo = cert.signature_hash_algorithm
+        hash_name = hash_algo.name.lower()
+    except Exception:
+        hash_algo = None
+        hash_name = sig_algo.lower()
 
-    if isinstance(hash_algo, hashes.SHA256):
+    if "md2" in hash_name or "md2" in sig_algo.lower():
+        bad("Signature uses MD2 (insecure algorithm)")
+        return False
+    elif isinstance(hash_algo, hashes.MD5) or "md5" in hash_name:
+        bad("Signature uses MD5 (insecure algorithm)")
+        return False
+    elif isinstance(hash_algo, hashes.SHA256):
         ok(f"Signature: {sig_algo} with SHA-256 (Modern & Secure)")
         return True
     elif isinstance(hash_algo, hashes.SHA384):
@@ -193,10 +210,10 @@ def check_signature_algorithm(cert):
         ok(f"Signature: {sig_algo} with SHA-512 (Modern & Secure)")
         return True
     elif isinstance(hash_algo, hashes.SHA1):
-        bad(f"Signature uses SHA-1 (DEPRECATED - Bitsight Rule Violation)")
+        bad("Signature uses SHA-1 (deprecated insecure algorithm)")
         return False
     else:
-        warn(f"Signature: {sig_algo} with {hash_algo.name}")
+        warn(f"Signature algorithm requires review: {sig_algo} ({hash_name or 'unknown'})")
         return True
 
 def check_san_count(cert):
@@ -257,7 +274,15 @@ def check_self_signed(cert):
     print("\n[*] Self-Signed Certificate")
 
     if cert.issuer == cert.subject:
-        bad("Certificate is SELF-SIGNED (Bitsight Grade Impact: CRITICAL)")
+        subject = cert.subject.rfc4514_string().lower()
+        if (
+            "kubernetes ingress controller fake certificate" in subject
+            or "ingress.local" in subject
+        ):
+            warn("Kubernetes Ingress self-signed certificate")
+            warn("    -> Replace the default ingress certificate with a trusted certificate")
+            return True
+        warn("Self-signed certificate")
         warn("    -> Not trusted by major CAs, indicates misconfiguration or test environment")
         return True
     else:
@@ -269,6 +294,37 @@ def check_self_signed(cert):
         except (IndexError, AttributeError):
             pass
         return False
+
+
+def check_ca_distrust(cert):
+    """Flag the issuer families explicitly named in BitSight certificate findings."""
+    print("\n[*] Certificate Authority Distrust")
+    issuer = cert.issuer.rfc4514_string()
+    issuer_lower = issuer.lower()
+    not_before, _ = cert_validity_dates(cert)
+
+    if "entrust" in issuer_lower and not_before >= datetime(
+        2024, 12, 1, tzinfo=timezone.utc
+    ):
+        warn("Entrust certificate distrusted by Google and Mozilla")
+        print(f"    Issuer: {issuer}")
+        return False
+
+    if "entrust" in issuer_lower and not_before >= datetime(
+        2024, 11, 12, tzinfo=timezone.utc
+    ):
+        warn("Entrust certificate distrusted by Google and Mozilla")
+        print(f"    Issuer: {issuer}")
+        return False
+
+    symantec_issuers = ("symantec", "verisign", "geotrust", "thawte", "rapidssl")
+    if any(name in issuer_lower for name in symantec_issuers):
+        warn("Legacy Symantec-family certificate may be distrusted by Chrome")
+        print(f"    Issuer: {issuer}")
+        return False
+
+    ok("No listed Entrust or legacy Symantec distrust finding detected")
+    return True
 
 
 def check_key_usage(cert):
@@ -362,12 +418,17 @@ def run(target, target_type=None, port=443):
     if tls_version:
         print(f"[+] Connected via {tls_version}")
 
+    print("\n[+] CERTIFICATE FINDINGS")
     check_validity(cert)
     check_key_strength(cert)
     check_signature_algorithm(cert)
+    check_ca_distrust(cert)
     check_self_signed(cert)
-    check_wildcard(cert)
     check_san_count(cert)
+
+    print("\n[+] ADDITIONAL SECURITY CHECKS")
+    check_expiry_horizon(cert)
+    check_wildcard(cert)
     check_key_usage(cert)
     check_extended_key_usage(cert)
 

@@ -2,6 +2,7 @@ import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta
 from io import StringIO
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from cryptography import x509
@@ -70,8 +71,53 @@ class CertificateScannerTests(unittest.TestCase):
             self.assertTrue(tls_certs.check_extended_key_usage(self.cert))
 
     def test_fixture_is_detected_as_self_signed(self):
-        with redirect_stdout(StringIO()):
+        output = StringIO()
+        with redirect_stdout(output):
             self.assertTrue(tls_certs.check_self_signed(self.cert))
+
+        self.assertIn("Self-signed certificate", output.getvalue())
+        self.assertNotIn("BitSight", output.getvalue())
+        self.assertNotIn("CRITICAL", output.getvalue())
+
+    def test_kubernetes_ingress_certificate_is_identified(self):
+        name = x509.Name(
+            [
+                x509.NameAttribute(
+                    NameOID.COMMON_NAME,
+                    "Kubernetes Ingress Controller Fake Certificate",
+                )
+            ]
+        )
+        cert = SimpleNamespace(subject=name, issuer=name)
+        output = StringIO()
+
+        with redirect_stdout(output):
+            self.assertTrue(tls_certs.check_self_signed(cert))
+
+        self.assertIn("Kubernetes Ingress self-signed certificate", output.getvalue())
+
+    def test_1024_bit_rsa_key_is_a_warn_certificate_finding(self):
+        key = rsa.generate_private_key(public_exponent=65537, key_size=1024)
+        cert = SimpleNamespace(public_key=lambda: key.public_key())
+        output = StringIO()
+
+        with redirect_stdout(output):
+            self.assertFalse(tls_certs.check_key_strength(cert))
+
+        self.assertIn("less than 2048 bits (1024)", output.getvalue())
+
+    def test_large_san_list_is_a_certificate_finding(self):
+        output = StringIO()
+        identities = [f"host-{index}.example.com" for index in range(26)]
+
+        with patch(
+            "scanners.tls_certs.get_cert_identities",
+            return_value=(identities, "example.com"),
+        ):
+            with redirect_stdout(output):
+                self.assertFalse(tls_certs.check_san_count(object()))
+
+        self.assertIn("26 SAN entries", output.getvalue())
 
     def test_certificate_scan_does_not_assess_name_mismatch(self):
         output = StringIO()
@@ -84,6 +130,55 @@ class CertificateScannerTests(unittest.TestCase):
 
         self.assertNotIn("NAME MISMATCH", output.getvalue())
         self.assertNotIn("Certificate Name Match", output.getvalue())
+        self.assertIn("CERTIFICATE FINDINGS", output.getvalue())
+        self.assertIn("ADDITIONAL SECURITY CHECKS", output.getvalue())
+        self.assertNotIn("BitSight", output.getvalue())
+
+    def test_future_date_is_not_graded_by_certificate_scanner(self):
+        now = datetime.utcnow()
+        future_cert = SimpleNamespace(
+            not_valid_before=now + timedelta(days=30),
+            not_valid_after=now + timedelta(days=120),
+        )
+        output = StringIO()
+
+        with redirect_stdout(output):
+            self.assertTrue(tls_certs.check_validity(future_cert))
+
+        self.assertNotIn("not yet valid", output.getvalue())
+        self.assertIn("not expired", output.getvalue())
+
+    def test_md5_signature_is_a_certificate_finding(self):
+        cert = SimpleNamespace(
+            signature_algorithm_oid=SimpleNamespace(
+                _name="md5WithRSAEncryption",
+                dotted_string="1.2.840.113549.1.1.4",
+            ),
+            signature_hash_algorithm=hashes.MD5(),
+        )
+        output = StringIO()
+
+        with redirect_stdout(output):
+            self.assertFalse(tls_certs.check_signature_algorithm(cert))
+
+        self.assertIn("Signature uses MD5", output.getvalue())
+
+    def test_entrust_distrust_is_a_certificate_finding(self):
+        issuer = x509.Name(
+            [x509.NameAttribute(NameOID.COMMON_NAME, "Entrust Test CA")]
+        )
+        cert = SimpleNamespace(
+            issuer=issuer,
+            not_valid_before=datetime(2025, 1, 1),
+            not_valid_after=datetime(2026, 1, 1),
+        )
+        output = StringIO()
+
+        with redirect_stdout(output):
+            self.assertFalse(tls_certs.check_ca_distrust(cert))
+
+        self.assertIn("Entrust certificate distrusted", output.getvalue())
+        self.assertNotIn("BitSight", output.getvalue())
 
     def test_certificate_evidence_contains_reproduction_and_captured_fields(self):
         evidence = tls_certs.format_certificate_evidence(

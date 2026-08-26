@@ -33,7 +33,7 @@ def format_email_evidence(domain, captured):
 
 
 def check_spf(domain, evidence=None):
-    print("\n[*] Checking SPF Record against Bitsight Criteria...")
+    print("\n[*] Checking SPF Record...")
     try:
         txt_records = list(dns.resolver.resolve(domain, 'TXT'))
         _record_dns_evidence(evidence, domain, "TXT", txt_records)
@@ -46,30 +46,30 @@ def check_spf(domain, evidence=None):
         
         if not spf_record:
             print("    \033[91m[✗] SPF Record: NOT FOUND\033[0m")
-            print("        -> Bitsight Grade Impact: BAD / RISK (High exposure to email spoofing).")
+            print("        -> Security impact: High exposure to email spoofing.")
             return
 
         print(f"    \033[92m[✓] SPF Record Found:\033[0m {spf_record}")
         
         if "+all" in spf_record:
-            print("    \033[91m[✗] Bitsight Rule Violation: Record ends with '+all' (Allows broad spoofing).\033[0m")
+            print("    \033[91m[✗] Policy violation: Record ends with '+all' (Allows broad spoofing).\033[0m")
         elif "?all" in spf_record:
-            print("    \033[93m[!] Bitsight Warning: Record ends with '?all' (Neutral / Incomplete enforcement).\033[0m")
+            print("    \033[93m[!] Record ends with '?all' (Neutral / Incomplete enforcement).\033[0m")
         elif "-all" in spf_record or "~all" in spf_record:
-            print("    \033[92m[✓] BitSight Rule Pass: Secure qualifier configured (-all / ~all).\033[0m")
+            print("    \033[92m[✓] Secure qualifier configured (-all / ~all).\033[0m")
         else:
-            print("    \033[91m[✗] BitSight Rule Violation: Missing explicit fall-through mechanism (all).\033[0m")
+            print("    \033[91m[✗] Missing explicit fall-through mechanism (all).\033[0m")
             
         lookup_mechanisms = ["include:", "a:", "mx:", "exists:", "redirect="]
         lookup_count = sum(spf_record.count(mech) for mech in lookup_mechanisms)
         
         if lookup_count > 10:
-            print(f"    \033[91m[✗] Bitsight Rule Violation: Too many DNS lookups ({lookup_count}/10 limit exceeded). Causes PermError.\033[0m")
+            print(f"    \033[91m[✗] Too many DNS lookups ({lookup_count}/10 limit exceeded). Causes PermError.\033[0m")
         else:
-            print(f"    \033[92m[✓] Bitsight Rule Pass: DNS lookup count is compliant ({lookup_count}/10).")
+            print(f"    \033[92m[✓] DNS lookup count is compliant ({lookup_count}/10).")
             
         if "ptr" in spf_record.lower():
-            print("    \033[91m[✗] Bitsight Rule Violation: Contains 'ptr' mechanism (Deprecated, slow, and insecure).\033[0m")
+            print("    \033[91m[✗] Contains 'ptr' mechanism (Deprecated, slow, and insecure).\033[0m")
 
     except Exception as e:
         _record_dns_evidence(evidence, domain, "TXT", error=e)
@@ -77,7 +77,7 @@ def check_spf(domain, evidence=None):
 
 
 def check_dmarc(domain, evidence=None):
-    print("\n[*] Checking DMARC Record against Bitsight Criteria...")
+    print("\n[*] Checking DMARC Record...")
     dmarc_domain = f"_dmarc.{domain}"
     try:
         txt_records = list(dns.resolver.resolve(dmarc_domain, 'TXT'))
@@ -91,7 +91,7 @@ def check_dmarc(domain, evidence=None):
                 
         if not dmarc_record:
             print("    \033[91m[✗] DMARC Record: NOT FOUND\033[0m")
-            print("        -> Bitsight Grade Impact: BAD / RISK (No domain spoofing protection protocol).")
+            print("        -> Security impact: No domain spoofing protection protocol.")
             return
 
         print(f"    \033[92m[✓] DMARC Record Found:\033[0m {dmarc_record}")
@@ -104,22 +104,22 @@ def check_dmarc(domain, evidence=None):
         
         p_policy = tags.get('p')
         if p_policy == "reject":
-            print("    \033[92m[✓] Bitsight Rule Pass: Policy set to REJECT (Maximum protection score).\033[0m")
+            print("    \033[92m[✓] Policy set to REJECT (Maximum protection score).\033[0m")
         elif p_policy == "quarantine":
             pct = tags.get('pct', '100')
             if pct != '100':
-                print(f"    \033[93m[!] Bitsight Warning: Policy is QUARANTINE but pct={pct} reduces enforcement strength.\033[0m")
+                print(f"    \033[93m[!] Policy is QUARANTINE but pct={pct} reduces enforcement strength.\033[0m")
             else:
-                print("    \033[92m[✓] Bitsight Rule Pass: Policy set to QUARANTINE (100% enforcement).\033[0m")
+                print("    \033[92m[✓] Policy set to QUARANTINE (100% enforcement).\033[0m")
         elif p_policy == "none":
-            print("    \033[93m[!] Bitsight Warning: Policy set to NONE (Monitoring mode only - Zero defensive enforcement score).\033[0m")
+            print("    \033[93m[!] Policy set to NONE (Monitoring mode only - Zero defensive enforcement score).\033[0m")
         else:
-            print("    \033[91m[✗] Bitsight Rule Violation: Missing or invalid policy 'p=' tag.\033[0m")
+            print("    \033[91m[✗] Missing or invalid policy 'p=' tag.\033[0m")
             
         if 'rua' in tags:
-            print(f"    \033[92m[✓] Bitsight Rule Pass: Aggregate reporting target published (rua={tags['rua']}).\033[0m")
+            print(f"    \033[92m[✓] Aggregate reporting target published (rua={tags['rua']}).\033[0m")
         else:
-            print("    \033[91m[✗] Bitsight Rule Violation: Missing 'rua' tag (DMARC runs blind without telemetry destination).")
+            print("    \033[91m[✗] Missing 'rua' tag (DMARC runs blind without telemetry destination).")
 
     except Exception as exc:
         _record_dns_evidence(evidence, dmarc_domain, "TXT", error=exc)
@@ -158,7 +158,7 @@ def validate_dkim_content(record_text, selector_name):
             
     p_val = tags.get('p')
     if not p_val:
-        print("    \033[91m[✗] Bitsight Rule Violation: Key is revoked or 'p=' tag is missing/empty.\033[0m")
+        print("    \033[91m[✗] Key is revoked or 'p=' tag is missing/empty.\033[0m")
         return True
 
     k_val = tags.get('k', 'rsa')
@@ -170,21 +170,21 @@ def validate_dkim_content(record_text, selector_name):
     if bit_size:
         print(f"        -> Detected RSA Key Strength: \033[1m{bit_size} bits\033[0m")
         if bit_size >= 2048:
-            print(f"    \033[92m[✓] Bitsight Rule Pass: Robust Key Strength ({bit_size} bits >= 2048 bits).\033[0m")
+            print(f"    \033[92m[✓] Robust Key Strength ({bit_size} bits >= 2048 bits).\033[0m")
         else:
-            print(f"    \033[91m[✗] Bitsight Rule Violation: WEAK KEY ({bit_size} bits). Keys below 2048 bits degrade safety score.\033[0m")
+            print(f"    \033[91m[✗] WEAK KEY ({bit_size} bits). Keys below 2048 bits degrade safety score.\033[0m")
     else:
         print("    \033[93m[!] Warning: Could not parse RSA public key structure to determine exact bit length.\033[0m")
 
     h_val = tags.get('h', '')
     if 'sha1' in h_val.lower() and 'sha256' not in h_val.lower():
-        print("    \033[91m[✗] Bitsight Rule Violation: Explicitly restricted to insecure SHA-1 hash algorithms.\033[0m")
+        print("    \033[91m[✗] Explicitly restricted to insecure SHA-1 hash algorithms.\033[0m")
         
     return True
 
 
 def check_dkim(domain, custom_selector=None, interactive=True, evidence=None):
-    print("\n[*] Checking DKIM Record against BitSight Criteria...")
+    print("\n[*] Checking DKIM Record...")
     common_selectors = ['default', 'google', 'k1', 'mail', 'sig1']
     found_any = False
 
@@ -247,7 +247,7 @@ def run(target, target_type=None, port=None, dkim_selector=None, interactive=Tru
         return {"evidence": format_email_evidence(target, [])}
 
     print("\n========================================")
-    print(" E-MAIL SECURITY & BITSIGHT COMPLIANCE")
+    print(" E-MAIL SECURITY ASSESSMENT")
     print(f" Target: {target}")
     print("========================================")
 

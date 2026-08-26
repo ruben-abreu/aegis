@@ -1,8 +1,11 @@
 import unittest
 from contextlib import ExitStack, redirect_stdout
+from datetime import datetime, timezone
 from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import patch
+
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from scanners import tls_config
 
@@ -45,6 +48,7 @@ class TlsConfigurationTests(unittest.TestCase):
                 "TLSv1.2 enabled",
                 "TLSv1.1 disabled",
                 "TLSv1.0 enabled",
+                "SSLv2 enabled",
                 "SSLv3 disabled",
             )
         )
@@ -55,12 +59,17 @@ class TlsConfigurationTests(unittest.TestCase):
                 tls_config.check_tls_versions("example.com")
 
         self.assertIn("TLSv1.0 supported", output.getvalue())
-        self.assertIn("Insecure protocols enabled: TLSv1.0", output.getvalue())
+        self.assertIn("SSLv2 supported", output.getvalue())
+        self.assertIn("Insecure protocols enabled: TLSv1.0, SSLv2", output.getvalue())
 
     def test_extended_checks_run_last_and_tls_versions_are_final(self):
         call_order = []
         check_names = (
             "check_hostname_match",
+            "check_certificate_timing",
+            "check_certificate_structure",
+            "check_configuration_public_key",
+            "check_certificate_chain",
             "check_forward_secrecy",
             "check_hsts_header",
             "check_ssl_compression",
@@ -68,7 +77,10 @@ class TlsConfigurationTests(unittest.TestCase):
             "check_secure_renegotiation",
             "check_protocol_downgrade_protection",
             "check_cipher_suites",
+            "check_export_ciphers",
             "check_dh_strength",
+            "check_common_dh_parameters",
+            "check_heartbleed",
             "check_tls_versions",
         )
 
@@ -88,13 +100,17 @@ class TlsConfigurationTests(unittest.TestCase):
                         side_effect=lambda *args, _name=name, **kwargs: call_order.append(_name),
                     )
                 )
-            with redirect_stdout(StringIO()):
+            output = StringIO()
+            with redirect_stdout(output):
                 tls_config.run(
                     "example.com", port=443, check_ciphers=True, interactive=False
                 )
 
         self.assertEqual(list(check_names), call_order)
         self.assertEqual(call_order[-1], "check_tls_versions")
+        self.assertIn("CONFIGURATION FINDINGS", output.getvalue())
+        self.assertIn("OPTIONAL EXTENDED FINDINGS", output.getvalue())
+        self.assertNotIn("bitsight", output.getvalue().lower())
 
     def test_name_mismatch_is_assessed_by_configuration_scanner(self):
         output = StringIO()
@@ -113,6 +129,87 @@ class TlsConfigurationTests(unittest.TestCase):
         self.assertIn("Certificate Name Match", output.getvalue())
         self.assertIn("NAME MISMATCH", output.getvalue())
 
+    def test_future_and_overlong_certificates_are_configuration_findings(self):
+        output = StringIO()
+        future_cert = SimpleNamespace(
+            not_valid_before=datetime(2027, 1, 1),
+            not_valid_after=datetime(2030, 1, 1),
+        )
+        long_cert = SimpleNamespace(
+            not_valid_before=datetime(2020, 1, 1),
+            not_valid_after=datetime(2022, 7, 1),
+        )
+
+        with redirect_stdout(output):
+            self.assertFalse(
+                tls_config.check_certificate_timing(
+                    future_cert, now=datetime(2026, 1, 1, tzinfo=timezone.utc)
+                )
+            )
+            self.assertFalse(
+                tls_config.check_certificate_timing(
+                    long_cert, now=datetime(2020, 1, 2, tzinfo=timezone.utc)
+                )
+            )
+
+        self.assertIn("issued for a date in the future", output.getvalue())
+        self.assertIn("duration exceeds recommended practice", output.getvalue())
+        self.assertNotIn("BitSight", output.getvalue())
+
+    def test_weak_ec_key_is_a_configuration_finding(self):
+        key = ec.generate_private_key(ec.SECP192R1())
+        cert = SimpleNamespace(public_key=lambda: key.public_key())
+        output = StringIO()
+
+        with redirect_stdout(output):
+            self.assertFalse(tls_config.check_configuration_public_key(cert))
+
+        self.assertIn("less than 224 bits", output.getvalue())
+
+    def test_sslscan_specific_bitsight_findings_are_parsed(self):
+        sslscan = "\n".join(
+            (
+                "Accepted TLSv1.0 40 bits EXP-RC4-MD5",
+                "DH prime is very commonly used",
+                "Heartbleed: vulnerable",
+            )
+        )
+        output = StringIO()
+
+        with patch("scanners.tls_config.sslscan_output", return_value=sslscan):
+            with redirect_stdout(output):
+                self.assertFalse(tls_config.check_export_ciphers("example.com"))
+                self.assertFalse(tls_config.check_common_dh_parameters("example.com"))
+                self.assertFalse(tls_config.check_heartbleed("example.com"))
+
+        self.assertIn("Allows insecure cipher: Export Ciphers", output.getvalue())
+        self.assertIn("very commonly used", output.getvalue())
+        self.assertIn("Vulnerable to Heartbleed", output.getvalue())
+
+    def test_ecdh_size_is_not_mistaken_for_a_short_dh_prime(self):
+        output = StringIO()
+        sslscan = (
+            "Accepted TLSv1.2 ECDHE-RSA-AES128-GCM-SHA256 "
+            "Curve 25519 DHE 253"
+        )
+
+        with patch("scanners.tls_config.sslscan_output", return_value=sslscan):
+            with redirect_stdout(output):
+                self.assertTrue(tls_config.check_dh_strength("example.com"))
+
+        self.assertIn("No finite-field DHE suites reported", output.getvalue())
+        self.assertNotIn("less than 2048", output.getvalue())
+
+    def test_short_finite_field_dh_prime_is_reported(self):
+        output = StringIO()
+        sslscan = "Accepted TLSv1.2 DHE-RSA-AES128-SHA DHE 1024"
+
+        with patch("scanners.tls_config.sslscan_output", return_value=sslscan):
+            with redirect_stdout(output):
+                self.assertFalse(tls_config.check_dh_strength("example.com"))
+
+        self.assertIn("less than 2048 bits (1024)", output.getvalue())
+
     def test_declining_extended_checks_skips_sslscan_checks(self):
         with ExitStack() as stack:
             stack.enter_context(
@@ -123,6 +220,11 @@ class TlsConfigurationTests(unittest.TestCase):
                 )
             )
             for name in (
+                "check_hostname_match",
+                "check_certificate_timing",
+                "check_certificate_structure",
+                "check_configuration_public_key",
+                "check_certificate_chain",
                 "check_forward_secrecy",
                 "check_hsts_header",
                 "check_ssl_compression",
@@ -132,7 +234,12 @@ class TlsConfigurationTests(unittest.TestCase):
             ):
                 stack.enter_context(patch.object(tls_config, name))
             cipher = stack.enter_context(patch.object(tls_config, "check_cipher_suites"))
+            export = stack.enter_context(patch.object(tls_config, "check_export_ciphers"))
             dh = stack.enter_context(patch.object(tls_config, "check_dh_strength"))
+            common_dh = stack.enter_context(
+                patch.object(tls_config, "check_common_dh_parameters")
+            )
+            heartbleed = stack.enter_context(patch.object(tls_config, "check_heartbleed"))
             versions = stack.enter_context(patch.object(tls_config, "check_tls_versions"))
 
             with redirect_stdout(StringIO()):
@@ -141,7 +248,10 @@ class TlsConfigurationTests(unittest.TestCase):
                 )
 
         cipher.assert_not_called()
+        export.assert_not_called()
         dh.assert_not_called()
+        common_dh.assert_not_called()
+        heartbleed.assert_not_called()
         versions.assert_not_called()
 
     def test_configuration_evidence_includes_handshake_and_raw_sslscan(self):
@@ -153,6 +263,7 @@ class TlsConfigurationTests(unittest.TestCase):
         )
 
         self.assertIn("openssl s_client -connect example.com:443", evidence)
+        self.assertIn("-showcerts -verify_return_error", evidence)
         self.assertIn("openssl x509 -noout -subject -ext subjectAltName", evidence)
         self.assertIn("Negotiated cipher: TLS_AES_256_GCM_SHA384", evidence)
         self.assertIn("RAW SSLSCAN OUTPUT", evidence)

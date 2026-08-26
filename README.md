@@ -30,12 +30,19 @@ and graded GOOD, FAIR, WARN, BAD or NEUTRAL. Hidden versions, reverse proxies
 and distribution backports are handled conservatively rather than guessed.
 
 **SSL/TLS Configuration**
-Which protocol versions the server actually negotiates — TLS 1.0, 1.1 and SSLv3
-are flagged as violations — plus cipher strength, forward secrecy,
-Diffie-Hellman key size, HSTS (with `max-age`, `includeSubDomains` and `preload`),
-TLS compression (CRIME), session resumption, secure renegotiation and certificate
-name mismatch. The slower `sslscan` cipher, DH and TLS-version checks are optional
-and run last.
+BitSight-aligned [configuration findings](https://help.bitsighttech.com/hc/en-us/articles/17441764941719-TLS-SSL-Configurations-Finding-Messages)
+cover certificate name mismatch, future-dated and
+overlong certificates, malformed certificates and public keys, chain/trust
+failures, weak DSA or elliptic-curve keys, export ciphers, short or commonly
+reused Diffie-Hellman parameters, Heartbleed, and deprecated SSL/TLS versions
+including SSLv2, SSLv3, TLS 1.0 and TLS 1.1. The chain is validated with the
+local platform trust store.
+
+Additional checks cover the active cipher, forward secrecy, HSTS (including
+`max-age`, `includeSubDomains` and `preload`), TLS compression, session
+resumption, secure renegotiation and downgrade protection. The slower
+`sslscan` checks are optional, share one probe, and keep TLS-version
+enumeration last.
 
 Hostname matching follows RFC 6125: when a SAN extension is present it is
 authoritative and the Common Name is ignored, exactly as browsers do. A
@@ -43,9 +50,12 @@ wildcard covers a single label, so `*.example.com` matches `www.example.com`
 but neither `a.b.example.com` nor `example.com` itself.
 
 **SSL/TLS Certificates**
-Validity window and time to expiry, key strength (RSA and ECDSA), signature
-algorithm (SHA-1 is a violation), self-signed detection, wildcard usage,
-certificate scope, Key Usage and Extended Key Usage.
+BitSight-aligned [certificate findings](https://help.bitsighttech.com/hc/en-us/articles/17442341368087-TLS-SSL-Certificates-Finding-Messages)
+cover expiration, RSA thresholds, MD2/MD5/SHA-1
+signatures, self-signed and default Kubernetes Ingress certificates,
+Entrust/legacy Symantec distrust indicators, and certificate scope. Wildcard
+usage, Key Usage and Extended Key Usage remain available as additional
+security checks rather than being presented as BitSight findings.
 
 Certificate scope is flagged above 25 SAN entries. A long SAN list means one
 private key protects many unrelated hosts, so a single key compromise or

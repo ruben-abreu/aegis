@@ -3,8 +3,11 @@ import socket
 import requests
 import subprocess
 import shlex
+import re
+from datetime import datetime, timezone
 
 from cryptography import x509
+from cryptography.hazmat.primitives.asymmetric import dsa, ec
 
 try:
     from .hostnames import first_match, get_cert_identities, hostname_matches
@@ -92,6 +95,15 @@ def _certificate_from_handshake(handshake):
         return None
 
 
+def _certificate_validity_dates(cert):
+    not_before = getattr(cert, "not_valid_before_utc", None)
+    not_after = getattr(cert, "not_valid_after_utc", None)
+    if not_before is None or not_after is None:
+        not_before = cert.not_valid_before.replace(tzinfo=timezone.utc)
+        not_after = cert.not_valid_after.replace(tzinfo=timezone.utc)
+    return not_before, not_after
+
+
 def check_hostname_match(cert, host):
     """Check whether the peer certificate identifies the requested host."""
     print("\n[*] Certificate Name Match")
@@ -122,12 +134,12 @@ def check_hostname_match(cert, host):
             ok(f"SAN entry '{matched}' matches {host}")
             return True
 
-        bad(f"NAME MISMATCH: no SAN entry matches {host}")
+        warn(f"NAME MISMATCH: no SAN entry matches {host}")
         return False
 
     warn("No SAN extension present (deprecated; clients require SAN)")
     if not common_name:
-        bad("NAME MISMATCH: certificate has neither SAN nor Common Name")
+        warn("NAME MISMATCH: certificate has neither SAN nor Common Name")
         return False
 
     print(f"    CN: {common_name}")
@@ -135,8 +147,113 @@ def check_hostname_match(cert, host):
         ok(f"CN matches {host}, but the missing SAN will still be rejected")
         return True
 
-    bad(f"NAME MISMATCH: CN '{common_name}' does not match {host}")
+    warn(f"NAME MISMATCH: CN '{common_name}' does not match {host}")
     return False
+
+
+def check_certificate_timing(cert, now=None):
+    """BitSight configuration findings for future and overlong certificates."""
+    print("\n[*] Certificate Timing")
+
+    if cert is None:
+        warn("Unable to inspect certificate dates from the TLS handshake")
+        return False
+
+    not_before, not_after = _certificate_validity_dates(cert)
+    now = now or datetime.now(timezone.utc)
+    passed = True
+
+    if now < not_before:
+        bad(
+            "Certificate was issued for a date in the future "
+            f"({not_before.strftime('%Y-%m-%d %H:%M:%S UTC')})"
+        )
+        passed = False
+    else:
+        ok("Certificate is not future-dated")
+
+    validity_days = (not_after - not_before).days
+    if not_before >= datetime(2018, 3, 1, tzinfo=timezone.utc) and validity_days > 825:
+        warn(
+            "Certificate duration exceeds recommended practice "
+            f"({validity_days} days; maximum 825)"
+        )
+        passed = False
+    else:
+        ok(f"Certificate duration does not exceed 825 days ({validity_days} days)")
+
+    return passed
+
+
+def check_certificate_structure(cert):
+    """Detect a malformed certificate or public key after the TLS handshake."""
+    print("\n[*] Certificate Structure")
+
+    if cert is None:
+        bad("Malformed certificate: the peer certificate could not be parsed")
+        return False
+
+    try:
+        cert.public_key()
+    except (TypeError, ValueError) as exc:
+        bad(f"Malformed public key: {exc}")
+        return False
+
+    ok("Certificate and public key parsed successfully")
+    return True
+
+
+def check_configuration_public_key(cert):
+    """BitSight configuration thresholds for DSA and elliptic-curve keys."""
+    print("\n[*] DSA / Elliptic-Curve Public Key")
+
+    if cert is None:
+        warn("Unable to inspect the certificate public key")
+        return False
+
+    try:
+        public_key = cert.public_key()
+    except (TypeError, ValueError) as exc:
+        bad(f"Malformed public key: {exc}")
+        return False
+
+    if isinstance(public_key, dsa.DSAPublicKey):
+        if public_key.key_size < 2048:
+            warn(f"DSA public key is less than 2048 bits ({public_key.key_size})")
+            return False
+        ok(f"DSA public key is at least 2048 bits ({public_key.key_size})")
+        return True
+
+    if isinstance(public_key, ec.EllipticCurvePublicKey):
+        key_size = public_key.curve.key_size
+        if key_size < 224:
+            bad(f"Elliptic curve public key is less than 224 bits ({key_size})")
+            return False
+        ok(f"Elliptic curve public key is at least 224 bits ({key_size})")
+        return True
+
+    ok("No DSA or elliptic-curve configuration finding applies")
+    return True
+
+
+def check_certificate_chain(host, port=443):
+    """Use the platform trust store to identify chain or trust-anchor failures."""
+    print("\n[*] Certificate Chain and Trust")
+    context = ssl.create_default_context()
+    context.check_hostname = False
+
+    try:
+        with socket.create_connection((host, port), timeout=10) as sock:
+            with context.wrap_socket(sock, server_hostname=host):
+                ok("Certificate chain reaches a trusted root")
+                return True
+    except ssl.SSLCertVerificationError as exc:
+        warn("Missing intermediate certificates or untrusted root anchor")
+        print(f"    Verification detail: {exc.verify_message}")
+        return False
+    except (OSError, ssl.SSLError, TimeoutError) as exc:
+        warn(f"Unable to verify the certificate chain: {exc}")
+        return False
 
 
 def format_tls_config_evidence(
@@ -155,6 +272,10 @@ def format_tls_config_evidence(
         (
             f"$ openssl s_client -connect {authority} -servername {server_name} "
             "-brief </dev/null"
+        ),
+        (
+            f"$ openssl s_client -connect {authority} -servername {server_name} "
+            "-showcerts -verify_return_error </dev/null"
         ),
         (
             f"$ openssl s_client -connect {authority} -servername {server_name} "
@@ -184,11 +305,29 @@ def format_tls_config_evidence(
         cert = _certificate_from_handshake(handshake)
         if cert is not None:
             san_identities, common_name = get_cert_identities(cert)
+            not_before, not_after = _certificate_validity_dates(cert)
+            try:
+                public_key = cert.public_key()
+                if isinstance(public_key, dsa.DSAPublicKey):
+                    key_description = f"DSA ({public_key.key_size} bits)"
+                elif isinstance(public_key, ec.EllipticCurvePublicKey):
+                    key_description = (
+                        f"ECDSA ({public_key.curve.name}, "
+                        f"{public_key.curve.key_size} bits)"
+                    )
+                else:
+                    key_description = type(public_key).__name__
+            except (TypeError, ValueError) as exc:
+                key_description = f"unable to parse ({exc})"
             lines.extend(
                 (
                     f"Certificate common name: {common_name or 'not present'}",
                     "Certificate SAN identities: "
                     + (", ".join(san_identities) if san_identities else "not present"),
+                    f"Certificate notBefore: {not_before.isoformat()}",
+                    f"Certificate notAfter: {not_after.isoformat()}",
+                    f"Certificate validity span: {(not_after - not_before).days} days",
+                    f"Certificate public key: {key_description}",
                 )
             )
     elif error:
@@ -210,6 +349,7 @@ def check_tls_versions(host, port=443):
         ("TLSv1.2", True),
         ("TLSv1.1", False),
         ("TLSv1.0", False),
+        ("SSLv2", False),
         ("SSLv3", False),
     ]
 
@@ -226,7 +366,7 @@ def check_tls_versions(host, port=443):
                     if is_modern:
                         ok(f"{version_name} supported")
                     else:
-                        bad(f"{version_name} supported (BITSIGHT RULE VIOLATION - DEPRECATED)")
+                        bad(f"{version_name} supported (deprecated protocol)")
                         insecure_found.append(version_name)
                 else:
                     if not is_modern:
@@ -466,39 +606,137 @@ def check_protocol_downgrade_protection(host, port=443):
         warn(f"Unable to check protocol version: {e}")
         return False
 
+
+def check_export_ciphers(host, port=443):
+    print("\n[*] Export Cipher Acceptance")
+    try:
+        output = sslscan_output(host, port)
+        accepted = []
+        for line in output.splitlines():
+            lowered = line.lower()
+            looks_like_suite = any(
+                marker in lowered
+                for marker in ("exp-", "_export_", "export40", "export56")
+            )
+            if "export" not in lowered and not looks_like_suite:
+                continue
+            if any(word in lowered for word in ("disabled", "rejected", "not accepted")):
+                continue
+            if "accepted" in lowered or "enabled" in lowered or looks_like_suite:
+                accepted.append(line.strip())
+
+        if accepted:
+            bad("Allows insecure cipher: Export Ciphers")
+            for line in accepted[:5]:
+                print(f"    {line}")
+            return False
+
+        ok("No accepted export cipher suites reported")
+        return True
+    except Exception as exc:
+        warn(f"Unable to assess export ciphers: {exc}")
+        return False
+
+
+def check_common_dh_parameters(host, port=443):
+    print("\n[*] Common Diffie-Hellman Parameters")
+    try:
+        output = sslscan_output(host, port)
+        findings = []
+        explicit_safe_result = False
+        for line in output.splitlines():
+            lowered = line.lower()
+            if "common" not in lowered:
+                continue
+            if "dh" not in lowered and "diffie-hellman" not in lowered:
+                continue
+            if "not common" in lowered or "no common" in lowered:
+                explicit_safe_result = True
+                continue
+            findings.append(line.strip())
+
+        if findings:
+            bad("Diffie-Hellman prime or public key is very commonly used")
+            for line in findings[:5]:
+                print(f"    {line}")
+            return False
+
+        if explicit_safe_result:
+            ok("Diffie-Hellman parameters are not reported as commonly reused")
+            return True
+
+        warn("sslscan did not report whether Diffie-Hellman parameters are commonly reused")
+        return False
+    except Exception as exc:
+        warn(f"Unable to assess common Diffie-Hellman parameters: {exc}")
+        return False
+
+
+def check_heartbleed(host, port=443):
+    print("\n[*] Heartbleed")
+    try:
+        output = sslscan_output(host, port)
+        lines = [line.strip() for line in output.splitlines() if "heartbleed" in line.lower()]
+        if not lines:
+            warn("sslscan did not report a Heartbleed result")
+            return False
+
+        lowered = " ".join(lines).lower()
+        if "not vulnerable" in lowered or "not affected" in lowered:
+            ok("Server is not reported as vulnerable to Heartbleed")
+            return True
+        if "vulnerable" in lowered:
+            bad("Vulnerable to Heartbleed")
+            for line in lines[:3]:
+                print(f"    {line}")
+            return False
+
+        warn(f"Unclear Heartbleed result: {lines[0]}")
+        return False
+    except Exception as exc:
+        warn(f"Unable to assess Heartbleed: {exc}")
+        return False
+
+
 def check_dh_strength(host, port=443):
     print("\n[*] Diffie-Hellman (DH) Key Strength")
 
     try:
         output = sslscan_output(host, port)
 
-        dh_found = False
-        weak_dh = False
+        finite_field_sizes = []
+        for raw_line in output.splitlines():
+            line = re.sub(r"\x1b\[[0-9;]*m", "", raw_line)
+            upper = line.upper()
+            # ECDHE values such as "DHE 253" describe an elliptic-curve
+            # exchange and must not be graded as a finite-field DH prime.
+            if "ECDHE" in upper:
+                continue
+            finite_field_sizes.extend(
+                int(size)
+                for size in re.findall(r"\b(?:DHE|DH)\s+(\d{3,5})\b", upper)
+            )
+            finite_field_sizes.extend(
+                int(size) for size in re.findall(r"\bFFDHE(\d{3,5})\b", upper)
+            )
 
-        for line in output.split("\n"):
-            if "DHE" in line or "DH" in line.upper():
-                dh_found = True
-                if "DHE 1024" in line or "DH 512" in line or "DH 1024" in line:
-                    bad(f"Weak DH detected: {line.strip()}")
-                    weak_dh = True
-                elif "DHE 2048" in line or "DH 2048" in line:
-                    ok(f"Acceptable DH: {line.strip()}")
-                elif "DHE 4096" in line or "DH 4096" in line or "DHE" in line:
-                    ok(f"Strong DH: {line.strip()}")
-
-            if "Server Key Exchange" in line or "secp" in line or "P-256" in line:
-                if "secp256r1" in line or "P-256" in line:
-                    ok("Using ECDHE (elliptic curve) - strong key exchange")
-
-        if weak_dh:
-            bad("CRITICAL: Weak DH vulnerable to LOGJAM attack")
-            return False
-        elif dh_found:
-            ok("DH key strength is acceptable")
+        if not finite_field_sizes:
+            ok("No finite-field DHE suites reported")
             return True
-        else:
-            warn("Could not determine DH strength")
+
+        weakest = min(finite_field_sizes)
+        if weakest < 512:
+            bad(f"Diffie-Hellman prime is less than 512 bits ({weakest})")
             return False
+        if weakest < 1024:
+            bad(f"Diffie-Hellman prime is less than 1024 bits ({weakest})")
+            return False
+        if weakest < 2048:
+            warn(f"Diffie-Hellman prime is less than 2048 bits ({weakest})")
+            return False
+
+        ok(f"Finite-field Diffie-Hellman prime is at least 2048 bits ({weakest})")
+        return True
 
     except Exception as e:
         warn(f"Unable to check DH strength: {e}")
@@ -514,7 +752,8 @@ def should_check_ciphers(check_ciphers=None, interactive=True):
 
     try:
         answer = input(
-            "\nRun extended cipher, DH and TLS version checks with sslscan? "
+            "\nRun extended export-cipher, DH, Heartbleed and TLS version "
+            "checks with sslscan? "
             "This can take up to a minute. [y/N]: "
         ).strip().lower()
     except EOFError:
@@ -546,7 +785,16 @@ def run(target, target_type=None, port=443, check_ciphers=None, interactive=True
     # into the extended checks at the end of the scan.
     reset_sslscan_cache()
 
-    check_hostname_match(_certificate_from_handshake(handshake), target)
+    certificate = _certificate_from_handshake(handshake)
+
+    print("\n[+] CONFIGURATION FINDINGS")
+    check_hostname_match(certificate, target)
+    check_certificate_timing(certificate)
+    check_certificate_structure(certificate)
+    check_configuration_public_key(certificate)
+    check_certificate_chain(target, port)
+
+    print("\n[+] ADDITIONAL SECURITY CHECKS")
     check_forward_secrecy(target, port)
     check_hsts_header(target, port)
     check_ssl_compression(target, port)
@@ -554,16 +802,22 @@ def run(target, target_type=None, port=443, check_ciphers=None, interactive=True
     check_secure_renegotiation(target, port)
     check_protocol_downgrade_protection(target, port)
 
-    print("\n[*] Extended Cipher and TLS Version Scan")
+    print("\n[*] Optional Extended Scan")
     run_extended = should_check_ciphers(check_ciphers, interactive)
     if run_extended:
         print("    Running sslscan checks; this may take up to a minute...")
+        print("\n[+] OPTIONAL ADDITIONAL CIPHER CONTEXT")
         check_cipher_suites(target, port)
+
+        print("\n[+] OPTIONAL EXTENDED FINDINGS")
+        check_export_ciphers(target, port)
         check_dh_strength(target, port)
+        check_common_dh_parameters(target, port)
+        check_heartbleed(target, port)
         # Keep the slow TLS version enumeration as the final test.
         check_tls_versions(target, port)
     else:
-        warn("Extended cipher, DH and TLS version checks skipped")
+        warn("Extended cipher, DH, Heartbleed and TLS version checks skipped")
 
     print("\n" + "=" * 40)
     return {

@@ -30,6 +30,8 @@ class EmailSecurityTests(unittest.TestCase):
         report = output.getvalue()
         self.assertIn("SPF Record Found", report)
         self.assertIn("Secure qualifier configured", report)
+        self.assertNotIn("BitSight", report)
+        self.assertNotIn("Bitsight", report)
 
     @patch("scanners.email.dns.resolver.resolve")
     def test_reject_dmarc_with_reporting_passes(self, resolve):
@@ -44,6 +46,8 @@ class EmailSecurityTests(unittest.TestCase):
         report = output.getvalue()
         self.assertIn("Policy set to REJECT", report)
         self.assertIn("Aggregate reporting target published", report)
+        self.assertNotIn("BitSight", report)
+        self.assertNotIn("Bitsight", report)
 
     def test_dkim_rsa_key_size_is_parsed(self):
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)

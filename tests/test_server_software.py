@@ -123,7 +123,8 @@ class ScannerOutputTests(unittest.TestCase):
         report = output.getvalue()
         self.assertIn("Detected: Apache 2.4.68", report)
         self.assertIn("GOOD: Apache 2.4.68", report)
-        self.assertIn("Catalogue source:", report)
+        self.assertIn("Catalogue basis:", report)
+        self.assertNotIn("bitsight", report.lower())
         self.assertIn("nmap -sV --script=http-headers", result["evidence"])
         self.assertIn("Server: Apache/2.4.68", result["evidence"])
 

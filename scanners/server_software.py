@@ -492,12 +492,12 @@ def assess_fingerprint(fingerprint, as_of=None):
         if fingerprint.distribution_hint:
             return Assessment(
                 "NEUTRAL",
-                f"The upstream version is older than BitSight's retained catalogue, but "
+                f"The upstream version is older than the retained support catalogue, but "
                 f"the {fingerprint.distribution_hint} package may contain backported fixes",
             )
         return Assessment(
             "BAD",
-            "The upstream version is older than BitSight's retained catalogue; the article "
+            "The upstream version is older than the retained support catalogue; the article "
             "removes versions that have been EOL for over one year",
         )
 
@@ -508,8 +508,8 @@ def assess_fingerprint(fingerprint, as_of=None):
                 f"{fingerprint.distribution_hint} package detected; backport status is unknown",
             )
         if _version_tuple(version) >= (1, 18, 0):
-            return Assessment("GOOD", "BitSight lists NGINX 1.18.0 and later as supported")
-        return Assessment("BAD", "BitSight lists NGINX versions before 1.18.0 as legacy")
+            return Assessment("GOOD", "NGINX 1.18.0 and later is listed as supported")
+        return Assessment("BAD", "NGINX versions before 1.18.0 are listed as legacy")
 
     if product == "PHP":
         if version.startswith("7.3"):
@@ -521,11 +521,11 @@ def assess_fingerprint(fingerprint, as_of=None):
             return Assessment("BAD", "PHP 7.3 security support ended on 2021-12-06")
         return Assessment(
             "NEUTRAL",
-            "BitSight says PHP support depends on OS-vendor security updates",
+            "PHP support depends on OS-vendor security updates",
         )
 
     if product == "Microsoft IIS" and version in {"8", "8.0", "8.5"}:
-        return Assessment("BAD", "BitSight lists IIS 8/8.5 support ending in 2023")
+        return Assessment("BAD", "IIS 8/8.5 support ended in 2023")
 
     if product == "cPanel" and version == "76":
         return Assessment("BAD", "Version 76 is listed as unsupported")
@@ -536,7 +536,7 @@ def assess_fingerprint(fingerprint, as_of=None):
     if product == "Serv-U":
         major = _version_tuple(version)[:1]
         if major and major[0] < 14:
-            return Assessment("BAD", "BitSight lists versions before 14 as unsupported")
+            return Assessment("BAD", "Versions before 14 are listed as unsupported")
 
     return Assessment(
         "NEUTRAL",
@@ -641,7 +641,7 @@ def run(target, target_type=None, port=443):
     print(" SERVER SOFTWARE")
     print(f" Target: {target}")
     print(f" Port: {port}")
-    print(f" Catalogue: BitSight snapshot {CATALOG_UPDATED.isoformat()}")
+    print(f" Catalogue snapshot: {CATALOG_UPDATED.isoformat()}")
     print("=" * 50)
 
     fingerprints = []
@@ -673,7 +673,7 @@ def run(target, target_type=None, port=443):
 
     if not fingerprints:
         print(
-            "[+] NEUTRAL: No BitSight-listed server software and version could be "
+            "[+] NEUTRAL: No catalogued server software and version could be "
             "identified from passive evidence"
         )
         print("    The service may suppress its banner or sit behind a reverse proxy.")
@@ -702,7 +702,7 @@ def run(target, target_type=None, port=443):
     catalogue_age = (date.today() - CATALOG_UPDATED).days
     if catalogue_age > 180:
         warn(f"The local support catalogue is {catalogue_age} days old and should be reviewed")
-    print(f"    Catalogue source: {CATALOG_SOURCE}")
+    print("    Catalogue basis: local dated support snapshot")
     print("\n" + "=" * 50)
     return {
         "evidence": format_server_software_evidence(
