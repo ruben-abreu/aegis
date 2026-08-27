@@ -73,7 +73,10 @@ TLS instead of STARTTLS.
 **Email Security**
 SPF (qualifier strength, the 10-lookup limit, deprecated `ptr`), DMARC (policy,
 `pct`, `rua` reporting) and DKIM (key length, SHA-1 restriction), discovered
-through common selectors or one you supply.
+through common selectors or one you supply. The web scanner accepts either the
+email domain or a complete DKIM record name such as
+`s02._domainkey.example.com`; a complete name is split into its selector and
+base domain automatically.
 
 **DNS Analysis** — CLI only
 A-record lookup for domains. For IP targets it builds a passive DNS graph from

@@ -17,13 +17,31 @@ def _record_dns_evidence(evidence, name, record_type, records=None, error=None):
     evidence.append("")
 
 
-def format_email_evidence(domain, captured):
+def split_dkim_target(target, dkim_selector=None):
+    """Accept either an email domain or selector._domainkey.domain."""
+    clean_target = str(target).strip().rstrip(".")
+    marker = "._domainkey."
+    if marker not in clean_target.lower():
+        return clean_target, dkim_selector, False
+
+    marker_index = clean_target.lower().index(marker)
+    selector = clean_target[:marker_index]
+    domain = clean_target[marker_index + len(marker):]
+    if not selector or not domain:
+        return clean_target, dkim_selector, False
+
+    return domain, selector, True
+
+
+def format_email_evidence(domain, captured, dkim_selector=None):
     quoted_domain = shlex.quote(str(domain))
+    selector = dkim_selector or "selector"
+    dkim_name = shlex.quote(f"{selector}._domainkey.{domain}")
     lines = [
         "REPRODUCE MANUALLY",
         f"$ dig {quoted_domain} txt +short",
         f"$ dig _dmarc.{quoted_domain} txt +short",
-        f"$ dig selector._domainkey.{quoted_domain} txt +short",
+        f"$ dig {dkim_name} txt +short",
         f"$ dig {quoted_domain} mx +short",
         "",
         "CAPTURED BY AEGIS (DNS queries)",
@@ -188,21 +206,22 @@ def check_dkim(domain, custom_selector=None, interactive=True, evidence=None):
     common_selectors = ['default', 'google', 'k1', 'mail', 'sig1']
     found_any = False
 
-    print("    [*] Brute-forcing common selectors...")
-    for selector in common_selectors:
-        dkim_domain = f"{selector}._domainkey.{domain}"
-        try:
-            txt_records = list(dns.resolver.resolve(dkim_domain, 'TXT'))
-            _record_dns_evidence(evidence, dkim_domain, "TXT", txt_records)
-            for record in txt_records:
-                record_text = record.to_text().strip('"')
-                if "v=DKIM1" in record_text or "p=" in record_text:
-                    validate_dkim_content(record_text, selector)
-                    found_any = True
-                    break
-        except Exception as exc:
-            _record_dns_evidence(evidence, dkim_domain, "TXT", error=exc)
-            continue
+    if not custom_selector:
+        print("    [*] Trying common selectors...")
+        for selector in common_selectors:
+            dkim_domain = f"{selector}._domainkey.{domain}"
+            try:
+                txt_records = list(dns.resolver.resolve(dkim_domain, 'TXT'))
+                _record_dns_evidence(evidence, dkim_domain, "TXT", txt_records)
+                for record in txt_records:
+                    record_text = record.to_text().strip('"')
+                    if "v=DKIM1" in record_text or "p=" in record_text:
+                        validate_dkim_content(record_text, selector)
+                        found_any = True
+                        break
+            except Exception as exc:
+                _record_dns_evidence(evidence, dkim_domain, "TXT", error=exc)
+                continue
             
     if interactive and not custom_selector:
         print("\n    --- Manual DKIM Check ---")
@@ -246,19 +265,29 @@ def run(target, target_type=None, port=None, dkim_selector=None, interactive=Tru
         print("\n[!] Email security auditing (SPF/DKIM/DMARC) requires a Domain target, not an IP address.")
         return {"evidence": format_email_evidence(target, [])}
 
+    domain, dkim_selector, selector_in_target = split_dkim_target(
+        target, dkim_selector
+    )
+
     print("\n========================================")
     print(" E-MAIL SECURITY ASSESSMENT")
-    print(f" Target: {target}")
+    print(f" Domain: {domain}")
+    if selector_in_target:
+        print(f" DKIM Selector: {dkim_selector} (from full DKIM record name)")
     print("========================================")
 
     evidence = []
-    check_spf(target, evidence=evidence)
-    check_dmarc(target, evidence=evidence)
+    check_spf(domain, evidence=evidence)
+    check_dmarc(domain, evidence=evidence)
     check_dkim(
-        target,
+        domain,
         custom_selector=dkim_selector,
         interactive=interactive,
         evidence=evidence,
     )
-    collect_mx_evidence(target, evidence)
-    return {"evidence": format_email_evidence(target, evidence)}
+    collect_mx_evidence(domain, evidence)
+    return {
+        "evidence": format_email_evidence(
+            domain, evidence, dkim_selector=dkim_selector
+        )
+    }

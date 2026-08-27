@@ -58,6 +58,56 @@ class EmailSecurityTests(unittest.TestCase):
 
         self.assertEqual(email.get_rsa_key_size(base64.b64encode(der)), 2048)
 
+    def test_full_dkim_record_name_is_split_into_selector_and_domain(self):
+        domain, selector, was_full_name = email.split_dkim_target(
+            "s02._domainkey.brocacefziekenhuisfarmacie.nl."
+        )
+
+        self.assertEqual(domain, "brocacefziekenhuisfarmacie.nl")
+        self.assertEqual(selector, "s02")
+        self.assertTrue(was_full_name)
+
+    @patch("scanners.email.dns.resolver.resolve")
+    def test_explicit_selector_queries_only_the_exact_dkim_name(self, resolve):
+        resolve.return_value = [TxtRecord("v=DKIM1; p=invalid-test-key")]
+        output = StringIO()
+
+        with redirect_stdout(output):
+            email.check_dkim(
+                "example.com",
+                custom_selector="s02",
+                interactive=False,
+            )
+
+        resolve.assert_called_once_with("s02._domainkey.example.com", "TXT")
+        self.assertIn("Querying record for selector: 's02'", output.getvalue())
+        self.assertNotIn("Trying common selectors", output.getvalue())
+
+    def test_full_dkim_name_uses_base_domain_for_other_email_checks(self):
+        with patch("scanners.email.check_spf") as check_spf:
+            with patch("scanners.email.check_dmarc") as check_dmarc:
+                with patch("scanners.email.check_dkim") as check_dkim:
+                    with patch("scanners.email.collect_mx_evidence") as collect_mx:
+                        with redirect_stdout(StringIO()):
+                            result = email.run(
+                                "s02._domainkey.example.com",
+                                interactive=False,
+                            )
+
+        check_spf.assert_called_once_with("example.com", evidence=[])
+        check_dmarc.assert_called_once_with("example.com", evidence=[])
+        check_dkim.assert_called_once_with(
+            "example.com",
+            custom_selector="s02",
+            interactive=False,
+            evidence=[],
+        )
+        collect_mx.assert_called_once_with("example.com", [])
+        self.assertIn(
+            "dig s02._domainkey.example.com txt +short",
+            result["evidence"],
+        )
+
     def test_ip_target_is_rejected_without_dns_queries(self):
         output = StringIO()
 
