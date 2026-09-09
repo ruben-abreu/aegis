@@ -178,13 +178,26 @@ aegis/
 
 ## Testing
 
-After installing the project dependencies, run the complete automated suite with:
+After installing the project dependencies, run the Python suite with:
 
 ```bash
 python3 -m unittest discover -v
 ```
 
 The tests mock network and subprocess calls, so they do not scan real targets.
+
+UI state regression tests use Node.js's built-in test runner (no npm dependencies):
+
+```bash
+node --test tests/test_ui.js
+```
+
+The results workspace supports an expanded view (Escape to exit). On narrow
+screens, Assessment and Technical Evidence use separate full-width views;
+the evidence preference is retained across reloads. Recent-history search covers
+the latest 50 records returned by the server, without deleting older scans.
+Recent scans is collapsed by default; click its heading to expand it. This
+visibility preference is also retained across reloads.
 
 ## Notes and limitations
 

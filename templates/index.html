@@ -10,31 +10,37 @@
 </head>
 
 <body>
+    <a class="skip-link" href="#resultsDisplay">Skip to results</a>
     <div class="container">
         <header>
             <h1>
                 <img src="{{ url_for('static', filename='assets/aegis-logo.png') }}" alt="Aegis" class="aegis-logo">
                 <span class="brand-name">
                     Aegis
-                    <span class="version">v1.5</span>
+                    <span class="version">v1.6</span>
                 </span>
             </h1>
 
-            <button id="darkModeToggle" class="dark-mode-toggle" onclick="toggleDarkMode()">🌙</button>
+            <span class="header-context">Security workspace</span>
+            <div class="header-actions">
+                <button id="darkModeToggle" class="dark-mode-toggle" onclick="toggleDarkMode()"
+                    aria-label="Switch to dark mode">Dark mode</button>
+            </div>
         </header>
 
         <main>
             <div class="panel scan-panel">
-                <h2>New Scan</h2>
+                <h2>New scan</h2>
                 <form id="scanForm">
                     <div class="form-group">
-                        <label for="target">Target:</label>
+                        <label for="target">Target</label>
                         <input type="text" id="target" name="target" placeholder="google.com:443 or 1.2.3.4:161/udp"
-                            required>
+                            required aria-describedby="targetHint formError" autocapitalize="none" spellcheck="false">
+                        <p id="targetHint" class="field-hint">Enter a domain or IP address, including the port.</p>
                     </div>
 
                     <div class="form-group">
-                        <label for="scanner">Scanner:</label>
+                        <label for="scanner">Scanner</label>
                         <select id="scanner" name="scanner" required>
                             <option value="">Select a scanner...</option>
                         </select>
@@ -75,28 +81,53 @@
                         </div>
                     </div>
 
-                    <button type="submit" class="btn btn-primary">Start Scan</button>
+                    <p id="formError" class="form-error" role="alert" hidden></p>
+                    <button id="startScanBtn" type="submit" class="btn btn-primary">Start Scan <span
+                            aria-hidden="true">→</span></button>
                 </form>
             </div>
 
             <div class="panel results-panel full-width">
-                <h2>Scan Results</h2>
-                <div id="resultsDisplay" class="results-output">
-                    <p class="loading">Run a scan to see results</p>
+                <div class="panel-heading">
+                    <div><span class="eyebrow">ASSESSMENT</span>
+                        <h2>Scan results</h2>
+                    </div>
+                    <div class="results-controls">
+                        <span id="workspaceStatus" class="workspace-status" role="status">Ready to scan</span>
+                        <button id="expandResults" class="btn" onclick="toggleResultsExpanded()" aria-pressed="false"
+                            title="Expand results to fill the window. Press Escape to exit.">Expand results</button>
+                    </div>
+                </div>
+                <div id="resultsDisplay" class="results-output" tabindex="-1">
+                    <div class="empty-state">
+                        <span class="empty-symbol" aria-hidden="true">⌁</span>
+                        <h3>A clearer view of your security.</h3>
+                        <p>Run a scan to inspect findings, explore technical evidence and export your assessment.</p>
+                        <span class="empty-caption">Choose a scanner to get started</span>
+                    </div>
                 </div>
             </div>
 
-            <div class="panel history-panel">
+            <div class="panel history-panel history-collapsed">
                 <div class="history-header">
-                    <h2>Recent Scans</h2>
+                    <h2><button id="toggleHistory" class="history-toggle" type="button" aria-expanded="false"
+                            aria-controls="historyBody" onclick="toggleHistory()">
+                            Recent scans <span aria-hidden="true">›</span>
+                        </button></h2>
                     <div class="history-actions">
                         <span id="historyCount" class="history-count"></span>
                         <button id="clearHistoryBtn" class="btn btn-danger" style="display: none;"
                             onclick="clearHistory()">Clear History</button>
                     </div>
                 </div>
-                <div id="scansList">
-                    <p class="loading">Loading scans...</p>
+                <div id="historyBody" hidden>
+                    <label class="sr-only" for="historySearch">Search recent scans</label>
+                    <input type="search" id="historySearch" placeholder="Search target or scanner…" autocomplete="off">
+                    <div id="scansList">
+                        <p class="loading">Loading scans...</p>
+                    </div>
+                    <button id="showMoreScans" class="btn-history-more" onclick="showMoreScans()" hidden>Show more
+                        scans</button>
                 </div>
             </div>
 
@@ -109,7 +140,7 @@
         </main>
 
         <footer>
-            <p>Aegis - Security Assessment</p>
+            <p>Aegis <span class="footer-dot">/</span> Security Assessment</p>
             <p class="footer-legal">
                 &copy; {{ current_year }} Ruben Abreu &middot; MIT License
             </p>
