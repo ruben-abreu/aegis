@@ -124,9 +124,11 @@ python main.py
 ```
 
 CLI targets accept an optional port: `example.com`, `example.com:8443`,
-`1.2.3.4`, `1.2.3.4:161/udp`. In the web interface a port is required for all
-scanners except Email Security, which accepts a bare domain such as
-`example.com`. Only public IPs are allowed.
+`1.2.3.4`, `1.2.3.4:161/udp`. In the web interface, scanners that need a port
+use **443** when it is omitted. A notice is shown when the scan starts and kept
+in its results and exports. Explicit ports are preserved; invalid ports still
+produce an error. Email Security accepts a bare domain such as `example.com`
+without assigning a port. Only public IPs are allowed.
 
 ## Exports
 

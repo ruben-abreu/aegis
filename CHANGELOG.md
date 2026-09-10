@@ -1,0 +1,10 @@
+# Changelog
+
+## 1.6.1 — 2026-09-10
+
+- Web scans that require a port now default to 443 when the target omits it.
+- The selected default is explained when starting the scan and recorded in its
+  output, including saved results and exports.
+- Results show the scan port alongside the risk vector.
+- Explicit ports and invalid-port validation are unchanged. Email Security
+  remains port-independent.

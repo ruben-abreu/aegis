@@ -17,11 +17,9 @@
                 <img src="{{ url_for('static', filename='assets/aegis-logo.png') }}" alt="Aegis" class="aegis-logo">
                 <span class="brand-name">
                     Aegis
-                    <span class="version">v1.6</span>
+                    <span class="version">v1.6.1</span>
                 </span>
             </h1>
-
-            <span class="header-context">Security workspace</span>
             <div class="header-actions">
                 <button id="darkModeToggle" class="dark-mode-toggle" onclick="toggleDarkMode()"
                     aria-label="Switch to dark mode">Dark mode</button>
@@ -36,7 +34,7 @@
                         <label for="target">Target</label>
                         <input type="text" id="target" name="target" placeholder="google.com:443 or 1.2.3.4:161/udp"
                             required aria-describedby="targetHint formError" autocapitalize="none" spellcheck="false">
-                        <p id="targetHint" class="field-hint">Enter a domain or IP address, including the port.</p>
+                        <p id="targetHint" class="field-hint">Port optional — defaults to 443.</p>
                     </div>
 
                     <div class="form-group">

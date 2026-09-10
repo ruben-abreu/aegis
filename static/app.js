@@ -86,7 +86,7 @@ function syncScannerOptions() {
     : scanner === 'ports' ? 'example.com:25 or 1.2.3.4:161/udp' : 'example.com:443';
   document.getElementById('targetHint').textContent = isEmail
     ? 'Domain or full DKIM selector hostname. No port needed.'
-    : 'Enter a domain or IP address, including the port.';
+    : 'Port optional — defaults to 443.';
   clearFormError();
 }
 
@@ -169,7 +169,12 @@ function syncDarkModeLabel(isDark) {
 }
 
 function colorizeOutput(text) {
-  const lines = text.split('\n');
+  // The target hint already explains this default. Hide only our leading
+  // notice in the assessment; preserve the stored output and raw exports.
+  const lines = text.replace(
+    /^\[i\] No port specified\. Using default port 443\.(?:\r?\n|$)(?:\r?\n)?/,
+    '',
+  ).split('\n');
   return lines
     .map(line => {
       if (!line.trim()) return `<div class="output-line"></div>`;
@@ -332,13 +337,6 @@ function setupFormHandler() {
       return;
     }
 
-    if (scanner !== 'email' && !targetInput.includes(':')) {
-      showFormError('Include a port for this scanner, for example example.com:443.');
-      document.getElementById('target').setAttribute('aria-invalid', 'true');
-      document.getElementById('target').focus();
-      return;
-    }
-
     const checkCiphers =
       scanner === 'tls_config' && document.getElementById('checkCiphers').checked;
 
@@ -365,7 +363,9 @@ function setupFormHandler() {
         resultsDisplay.innerHTML = '<p class="loading">Scan starting… Results will appear here.</p>';
         setWorkspaceStatus('Scan in progress');
         resultsDisplay.scrollIntoView({ block: 'nearest' });
-        showToast('Scan started!', 'success');
+        showToast(data.port_defaulted
+          ? `No port specified. Using default port ${data.port}. Scan started!`
+          : 'Scan started!', 'success');
         rememberLastSelection(targetInput, scanner);
 
         startPolling(data.id);
@@ -510,6 +510,7 @@ async function viewScan(scanId, focusResults = false) {
                     <span class="result-target">${escapeHtml(scan.target)}</span>
                     <div class="result-meta">
                       <span>${escapeHtml(scanners[scan.scanner] || scan.scanner)}</span>
+                      ${scan.results.port != null ? `<span>Port ${escapeHtml(scan.results.port)}</span>` : ''}
                       <span class="status ${escapeHtml(scan.status)}">${escapeHtml(scan.status)}</span>
                       <span>${new Date(scan.timestamp).toLocaleString()}</span>
                     </div>

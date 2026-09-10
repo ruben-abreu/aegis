@@ -31,6 +31,7 @@ SCANNERS = [
 ]
 
 SCANNER_LABELS = dict(SCANNERS)
+DEFAULT_SCAN_PORT = 443
 
 ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*m')
 
@@ -188,6 +189,7 @@ def start_scan():
 
     target = target_input
     extracted_port = None
+    port_defaulted = False
 
     if ':' in target_input:
         try:
@@ -198,9 +200,13 @@ def start_scan():
         if not 1 <= extracted_port <= 65535:
             return jsonify({'error': 'Port must be between 1 and 65535'}), 400
     elif scanner != 'email':
-        return jsonify({
-            'error': 'Port is required for this scanner. Example: apple.com:443'
-        }), 400
+        extracted_port = DEFAULT_SCAN_PORT
+        port_defaulted = True
+
+    port_notice = (
+        f'[i] No port specified. Using default port {extracted_port}.\n\n'
+        if port_defaulted else ''
+    )
 
     try:
         conn = sqlite3.connect(DB_FILE)
@@ -215,7 +221,7 @@ def start_scan():
                     'scanner': scanner,
                     'port': extracted_port,
                     'timestamp': datetime.now().isoformat(),
-                    'output': '',
+                    'output': port_notice,
                     'evidence': '',
                 }),
                 'running',
@@ -226,6 +232,7 @@ def start_scan():
         conn.close()
 
         output_stream = StreamingOutput(scan_id)
+        output_stream.write(port_notice)
         active_scans[scan_id] = {'stream': output_stream, 'status': 'running'}
 
         thread = threading.Thread(
@@ -245,6 +252,8 @@ def start_scan():
         return jsonify({
             'id': scan_id,
             'status': 'started',
+            'port': extracted_port,
+            'port_defaulted': port_defaulted,
             'message': f'Scan started for {target}'
         })
 

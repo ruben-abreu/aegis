@@ -87,6 +87,28 @@ function fixture() {
   return {context, get, selectors, groups, stored, body, run: code => vm.runInContext(code, context)};
 }
 
+test('assessment omits the redundant default-port prefix from live and saved output', () => {
+  const f = fixture();
+  const notice = '[i] No port specified. Using default port 443.';
+  for (const newline of ['\n', '\r\n']) {
+    const output = `${notice}${newline}${newline}[*] Certificate checks${newline}[✓] Valid`;
+    const html = f.context.colorizeOutput(output);
+    assert.doesNotMatch(html, /No port specified|Using default port/);
+    assert.match(html, /^<div class="output-line output-title">/);
+    assert.match(html, /Certificate checks/);
+    assert.match(html, /\[✓\] Valid/);
+    assert.ok(output.startsWith(notice));
+  }
+  assert.doesNotMatch(f.context.colorizeOutput(notice), /No port specified/);
+});
+
+test('assessment preserves other informational messages and port findings', () => {
+  const f = fixture();
+  const html = f.context.colorizeOutput('[i] Connected to port 443\n[!] Port 443 did not respond');
+  assert.match(html, /Connected to port 443/);
+  assert.match(html, /Port 443 did not respond/);
+});
+
 test('evidence preference synchronizes desktop, mobile and saved state', () => {
   const f = fixture();
   f.context.setResultPane('evidence');
@@ -152,7 +174,7 @@ test('recent scans are collapsed by default and remember the chosen visibility',
 
 test('compact scan setup omits redundant captions but keeps options and warnings', () => {
   const template = fs.readFileSync(path.join(__dirname, '../templates/index.html'), 'utf8');
-  assert.doesNotMatch(template, /Local workspace|>WORKSPACE<|Choose what to inspect\.|scannerHint/);
+  assert.doesNotMatch(template, /Security workspace|Local workspace|>WORKSPACE<|Choose what to inspect\.|scannerHint/);
   assert.doesNotMatch(source, /scannerHint|Inspect TLS configuration/);
   assert.match(template, /<h2>New scan<\/h2>/);
   assert.match(template, /id="tlsExtendedOption"/);
@@ -191,25 +213,47 @@ test('failed submission preserves the previous results and enables retry', async
   assert.equal(f.get('startScanBtn').disabled, false);
 });
 
-test('portless input is blocked for TLS but accepted for email and DKIM', async () => {
+test('portless TLS input starts a scan and clearly announces the server-selected port', async () => {
   const f = fixture();
-  f.get('target').value = 's02._domainkey.example.com';
+  f.get('target').value = 'example.com';
   f.get('scanner').value = 'tls_certs';
   let payload;
+  let toast;
+  f.context.showToast = message => { toast = message; };
   f.context.fetch = async (url, options) => {
     payload = JSON.parse(options.body);
-    return {ok: true, json: async () => ({id: 13})};
+    return {ok: true, json: async () => ({id: 13, port: 443, port_defaulted: true})};
   };
   f.run('startPolling = () => {}; loadScans = () => {};');
   f.context.setupFormHandler();
   await f.get('scanForm').listeners.submit({preventDefault() {}});
-  assert.equal(payload, undefined);
-  assert.equal(f.get('target').getAttribute('aria-invalid'), 'true');
-  f.get('scanner').value = 'email';
-  await f.get('scanForm').listeners.submit({preventDefault() {}});
-  assert.equal(payload.target, 's02._domainkey.example.com');
-  assert.equal(payload.scanner, 'email');
-  assert.equal(payload.check_ciphers, false);
+  assert.equal(payload.target, 'example.com');
+  assert.match(toast, /No port specified. Using default port 443/);
+  assert.equal(f.get('formError').hidden, true);
+  f.context.syncScannerOptions();
+  assert.match(f.get('targetHint').textContent, /defaults to 443/);
+});
+
+test('email and explicit-port scans do not show a default-port notice', async () => {
+  for (const [scanner, target] of [['email', 's02._domainkey.example.com'], ['tls_config', 'example.com:8443']]) {
+    const f = fixture();
+    f.get('target').value = target;
+    f.get('scanner').value = scanner;
+    let payload;
+    let toast;
+    f.context.showToast = message => { toast = message; };
+    f.context.fetch = async (url, options) => {
+      payload = JSON.parse(options.body);
+      return {ok: true, json: async () => ({id: 13, port_defaulted: false})};
+    };
+    f.run('startPolling = () => {}; loadScans = () => {};');
+    f.context.setupFormHandler();
+    await f.get('scanForm').listeners.submit({preventDefault() {}});
+    assert.equal(payload.target, target);
+    assert.equal(payload.scanner, scanner);
+    assert.equal(payload.check_ciphers, false);
+    assert.equal(toast, 'Scan started!');
+  }
 });
 
 test('late history responses cannot replace the most recently selected scan', async () => {
@@ -231,12 +275,13 @@ test('late history responses cannot replace the most recently selected scan', as
 test('scan rendering restores evidence preference and both export formats', async () => {
   const f = fixture();
   f.stored.set('technicalEvidenceVisible', 'true');
-  f.context.fetch = async () => ({ok: true, json: async () => ({target:'example.com', scanner:'tls_certs', status:'completed', timestamp:'2026-09-08T12:00:00', results:{output:'[✓] Valid <certificate>', evidence:'$ openssl x509\nserial=ABC'}})});
+  f.context.fetch = async () => ({ok: true, json: async () => ({target:'example.com', scanner:'tls_certs', status:'completed', timestamp:'2026-09-08T12:00:00', results:{port:443, output:'[✓] Valid <certificate>', evidence:'$ openssl x509\nserial=ABC'}})});
   await f.context.viewScan(1);
   const html = f.get('resultsDisplay').innerHTML;
   assert.match(html, /results-workspace evidence-open/);
   assert.match(html, /&lt;certificate&gt;/);
   assert.match(html, /serial=ABC/);
+  assert.match(html, /Port 443/);
   assert.match(html, /exportScan\(1, 'txt'\)/);
   assert.match(html, /exportScan\(1, 'json'\)/);
 });
