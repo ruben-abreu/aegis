@@ -25,7 +25,7 @@ python app.py
 http://127.0.0.1:5050
 ```
 
-That's it! 🎉
+That's it!
 
 > **Why port 5050 and not 5000?** On macOS, port 5000 is claimed by the
 > **AirPlay Receiver** (part of ControlCenter), which binds `*:5000` on both
@@ -35,11 +35,12 @@ That's it! 🎉
 
 ## Features
 
-✅ **Web Interface** - No CLI needed  
-✅ **Local Storage** - SQLite database (`aegis_results.db`)  
-✅ **Scan History** - View all previous scans  
-✅ **Customer Exports** - Download raw results as TXT or JSON  
-✅ **Risk Vectors** (in assessment order):
+- **Web Interface** - No CLI needed
+- **Local Storage** - SQLite database (`aegis_results.db`)
+- **Scan History** - View all previous scans
+- **Customer Exports** - Download raw results as TXT or JSON
+- **Risk Vectors** (in assessment order):
+
    1. Web Application Security
    2. SSL/TLS Configuration
    3. SSL/TLS Certificates
@@ -144,4 +145,4 @@ sudo apt install sslscan
 
 ---
 
-Happy scanning! 🛡️
+Happy scanning!
