@@ -26,7 +26,8 @@ class DnsScannerTests(unittest.TestCase):
         report = output.getvalue()
         self.assertIn("203.0.113.10", report)
         self.assertIn("203.0.113.11", report)
-        self.assertIn("dig example.com A +short", result["evidence"])
+        self.assertNotIn("REPRODUCE MANUALLY", result["evidence"])
+        self.assertNotIn("CAPTURED BY AEGIS", result["evidence"])
         self.assertIn("A example.com -> 203.0.113.10", result["evidence"])
 
     @patch("scanners.dns.dns.resolver.resolve", side_effect=Exception("lookup failed"))

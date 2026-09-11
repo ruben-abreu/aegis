@@ -125,7 +125,8 @@ class ScannerOutputTests(unittest.TestCase):
         self.assertIn("GOOD: Apache 2.4.68", report)
         self.assertIn("Catalogue basis:", report)
         self.assertNotIn("bitsight", report.lower())
-        self.assertIn("nmap -sV --script=http-headers", result["evidence"])
+        self.assertNotIn("$ nmap", result["evidence"])
+        self.assertNotIn("CAPTURED BY AEGIS", result["evidence"])
         self.assertIn("Server: Apache/2.4.68", result["evidence"])
 
 

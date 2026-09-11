@@ -1,6 +1,5 @@
 import ssl
 import socket
-import shlex
 from datetime import datetime, timezone
 from cryptography import x509
 from cryptography.x509.oid import NameOID, ExtensionOID
@@ -9,9 +8,11 @@ from cryptography.hazmat.primitives.asymmetric import rsa, ec
 import urllib3
 
 try:
-    from .hostnames import get_cert_identities, is_ip_address
+    from .hostnames import get_cert_identities
+    from .terminal import capture_openssl_evidence
 except ImportError:  # run directly rather than as part of the package
-    from hostnames import get_cert_identities, is_ip_address
+    from hostnames import get_cert_identities
+    from terminal import capture_openssl_evidence
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -26,71 +27,6 @@ def bad(msg): print(f"{RED}[✗]{END} {msg}")
 MAX_SAN_ENTRIES = 25
 
 
-def _openssl_authority(host, port):
-    host = str(host)
-    authority = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
-    return shlex.quote(authority)
-
-
-def format_certificate_evidence(cert, host, port=443, tls_version=None):
-    """Return reproducible certificate evidence from the certificate we parsed.
-
-    The right-hand UI pane must not pretend that Python-generated fields are
-    literal OpenSSL output. It therefore shows the equivalent command first,
-    followed by the values captured by Aegis from the same TLS certificate.
-    """
-    authority = _openssl_authority(host, port)
-    server_name = shlex.quote(str(host))
-    lines = [
-        "REPRODUCE MANUALLY",
-        f"$ openssl s_client -connect {authority} -servername {server_name} "
-        "</dev/null 2>/dev/null | \\",
-        "  openssl x509 -noout -subject -issuer -dates -serial -fingerprint -sha256 \\",
-        "  -ext subjectAltName",
-        "",
-        "CAPTURED BY AEGIS (Python TLS probe)",
-        f"Endpoint: {host}:{port}",
-        f"Negotiated protocol: {tls_version or 'unknown'}",
-        f"Subject: {cert.subject.rfc4514_string()}",
-        f"Issuer: {cert.issuer.rfc4514_string()}",
-    ]
-
-    not_before, not_after = cert_validity_dates(cert)
-    lines.extend(
-        (
-            f"notBefore={not_before.strftime('%b %d %H:%M:%S %Y GMT')}",
-            f"notAfter={not_after.strftime('%b %d %H:%M:%S %Y GMT')}",
-            f"serial={cert.serial_number:X}",
-            f"SHA256 Fingerprint={cert.fingerprint(hashes.SHA256()).hex(':').upper()}",
-        )
-    )
-
-    try:
-        public_key = cert.public_key()
-        if isinstance(public_key, rsa.RSAPublicKey):
-            lines.append(f"Public Key: RSA ({public_key.key_size} bits)")
-        elif isinstance(public_key, ec.EllipticCurvePublicKey):
-            lines.append(
-                f"Public Key: ECDSA ({public_key.curve.name}, "
-                f"{public_key.curve.key_size} bits)"
-            )
-        else:
-            lines.append(f"Public Key: {type(public_key).__name__}")
-    except (TypeError, ValueError) as exc:
-        lines.append(f"Public Key: unable to parse ({exc})")
-
-    identities, _ = get_cert_identities(cert)
-    lines.extend(("", "X509v3 Subject Alternative Name:"))
-    if identities:
-        formatted = [
-            f"IP Address:{identity}" if is_ip_address(identity) else f"DNS:{identity}"
-            for identity in identities
-        ]
-        lines.append("    " + ", ".join(formatted))
-    else:
-        lines.append("    Not present")
-
-    return "\n".join(lines)
 
 def get_certificate(host, port=443):
     try:
@@ -409,10 +345,11 @@ def run(target, target_type=None, port=443):
     print("=" * 40)
 
     cert, tls_version = get_certificate(target, port)
+    evidence = capture_openssl_evidence(target, port)
 
     if cert is None:
         bad("Unable to retrieve certificate from target")
-        return {"evidence": "No certificate evidence was captured."}
+        return {"evidence": evidence}
 
     print(f"\n[+] Certificate retrieved successfully")
     if tls_version:
@@ -434,7 +371,5 @@ def run(target, target_type=None, port=443):
 
     print("\n" + "=" * 40)
     return {
-        "evidence": format_certificate_evidence(
-            cert, target, port=port, tls_version=tls_version
-        )
+        "evidence": evidence
     }

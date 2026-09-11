@@ -11,8 +11,10 @@ from cryptography.hazmat.primitives.asymmetric import dsa, ec
 
 try:
     from .hostnames import first_match, get_cert_identities, hostname_matches
+    from .terminal import capture_openssl_evidence
 except ImportError:  # run directly rather than as part of the package
     from hostnames import first_match, get_cert_identities, hostname_matches
+    from terminal import capture_openssl_evidence
 
 _sslscan_cache = {}
 
@@ -58,10 +60,6 @@ STRONG_CIPHERS = [
 ]
 
 
-def _openssl_authority(host, port):
-    host = str(host)
-    authority = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
-    return shlex.quote(authority)
 
 
 def capture_tls_handshake(host, port=443):
@@ -256,90 +254,13 @@ def check_certificate_chain(host, port=443):
         return False
 
 
-def format_tls_config_evidence(
-    host, port=443, handshake=None, sslscan_raw=None, error=None
-):
-    """Format actual TLS probe values without presenting them as OpenSSL output."""
-    authority = _openssl_authority(host, port)
-    server_name = shlex.quote(str(host))
-    sslscan_command = (
-        f"sslscan {shlex.quote(str(host))}"
-        if port == 443
-        else f"sslscan --port {port} {shlex.quote(str(host))}"
-    )
-    lines = [
-        "REPRODUCE MANUALLY",
-        (
-            f"$ openssl s_client -connect {authority} -servername {server_name} "
-            "-brief </dev/null"
-        ),
-        (
-            f"$ openssl s_client -connect {authority} -servername {server_name} "
-            "-showcerts -verify_return_error </dev/null"
-        ),
-        (
-            f"$ openssl s_client -connect {authority} -servername {server_name} "
-            "</dev/null 2>/dev/null | openssl x509 -noout -subject "
-            "-ext subjectAltName"
-        ),
-        f"$ {sslscan_command}",
-        "",
-        "CAPTURED BY AEGIS (Python TLS handshake)",
-        f"Endpoint: {host}:{port}",
-    ]
-
-    if handshake:
-        lines.extend(
-            (
-                f"Negotiated protocol: {handshake['protocol']}",
-                f"Negotiated cipher: {handshake['cipher']}",
-                f"Cipher protocol: {handshake['cipher_protocol']}",
-                f"Cipher strength: {handshake['cipher_bits']} bits",
-                f"TLS compression: {handshake['compression']}",
-                (
-                    "Session ticket on initial handshake: "
-                    f"{'yes' if handshake['session_ticket'] else 'no'}"
-                ),
-            )
-        )
-        cert = _certificate_from_handshake(handshake)
-        if cert is not None:
-            san_identities, common_name = get_cert_identities(cert)
-            not_before, not_after = _certificate_validity_dates(cert)
-            try:
-                public_key = cert.public_key()
-                if isinstance(public_key, dsa.DSAPublicKey):
-                    key_description = f"DSA ({public_key.key_size} bits)"
-                elif isinstance(public_key, ec.EllipticCurvePublicKey):
-                    key_description = (
-                        f"ECDSA ({public_key.curve.name}, "
-                        f"{public_key.curve.key_size} bits)"
-                    )
-                else:
-                    key_description = type(public_key).__name__
-            except (TypeError, ValueError) as exc:
-                key_description = f"unable to parse ({exc})"
-            lines.extend(
-                (
-                    f"Certificate common name: {common_name or 'not present'}",
-                    "Certificate SAN identities: "
-                    + (", ".join(san_identities) if san_identities else "not present"),
-                    f"Certificate notBefore: {not_before.isoformat()}",
-                    f"Certificate notAfter: {not_after.isoformat()}",
-                    f"Certificate validity span: {(not_after - not_before).days} days",
-                    f"Certificate public key: {key_description}",
-                )
-            )
-    elif error:
-        lines.append(f"Handshake error: {error}")
-
-    lines.extend(("", "RAW SSLSCAN OUTPUT"))
-    if sslscan_raw:
-        lines.append(sslscan_raw.strip())
-    else:
-        lines.append("Not captured. Extended cipher and TLS checks were not run or sslscan failed.")
-
-    return "\n".join(lines)
+def format_tls_config_evidence(host, port=443, openssl_raw="", sslscan_raw=None):
+    """Join executed commands and their unmodified output, without report headings."""
+    transcript = openssl_raw
+    if sslscan_raw is not None:
+        args = ["sslscan", str(host)] if port == 443 else ["sslscan", "--port", str(port), str(host)]
+        transcript += f"\n$ {shlex.join(args)}\n{sslscan_raw}"
+    return transcript
 
 def check_tls_versions(host, port=443):
     print("\n[*] TLS Version Support")
@@ -775,11 +696,12 @@ def run(target, target_type=None, port=443, check_ciphers=None, interactive=True
         bad(f"Unable to connect to {target}:{port}")
         return {
             "evidence": format_tls_config_evidence(
-                target, port=port, error=str(exc)
+                target, port=port, openssl_raw=capture_openssl_evidence(target, port)
             )
         }
 
     print(f"\n[+] Connection successful")
+    openssl_raw = capture_openssl_evidence(target, port)
 
     # Fresh sslscan data per run. The cache is only populated if the user opts
     # into the extended checks at the end of the scan.
@@ -824,7 +746,7 @@ def run(target, target_type=None, port=443, check_ciphers=None, interactive=True
         "evidence": format_tls_config_evidence(
             target,
             port=port,
-            handshake=handshake,
+            openssl_raw=openssl_raw,
             sslscan_raw=_sslscan_cache.get((target, port)) if run_extended else None,
         )
     }

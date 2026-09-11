@@ -13,6 +13,11 @@ from scanners import tls_config
 class TlsConfigurationTests(unittest.TestCase):
     def setUp(self):
         tls_config.reset_sslscan_cache()
+        capture = patch.object(tls_config, 'capture_openssl_evidence', return_value=
+            '$ openssl s_client -connect example.com:443 -servername example.com -showcerts </dev/null\n'
+            'verify error:num=20:unable to get local issuer certificate\n')
+        self.capture = capture.start()
+        self.addCleanup(capture.stop)
 
     @staticmethod
     def _handshake():
@@ -254,20 +259,33 @@ class TlsConfigurationTests(unittest.TestCase):
         heartbleed.assert_not_called()
         versions.assert_not_called()
 
-    def test_configuration_evidence_includes_handshake_and_raw_sslscan(self):
+    def test_configuration_evidence_preserves_openssl_errors_and_raw_sslscan(self):
+        raw = self.capture.return_value
         evidence = tls_config.format_tls_config_evidence(
             "example.com",
             port=443,
-            handshake=self._handshake(),
+            openssl_raw=raw,
             sslscan_raw="TLSv1.3 enabled\nTLSv1.0 disabled",
         )
 
         self.assertIn("openssl s_client -connect example.com:443", evidence)
-        self.assertIn("-showcerts -verify_return_error", evidence)
-        self.assertIn("openssl x509 -noout -subject -ext subjectAltName", evidence)
-        self.assertIn("Negotiated cipher: TLS_AES_256_GCM_SHA384", evidence)
-        self.assertIn("RAW SSLSCAN OUTPUT", evidence)
+        self.assertTrue(evidence.startswith(raw))
+        self.assertIn('unable to get local issuer certificate', evidence)
+        self.assertIn('$ sslscan example.com', evidence)
+        self.assertNotIn('CAPTURED BY AEGIS', evidence)
+        self.assertNotIn('REPRODUCE MANUALLY', evidence)
         self.assertIn("TLSv1.0 disabled", evidence)
+
+    def test_skipped_extended_checks_do_not_add_fake_sslscan_output(self):
+        raw = self.capture.return_value
+        self.assertEqual(tls_config.format_tls_config_evidence('example.com', openssl_raw=raw), raw)
+
+    def test_python_handshake_failure_still_collects_native_openssl_errors(self):
+        with patch.object(tls_config, 'capture_tls_handshake', side_effect=OSError('failed')):
+            with redirect_stdout(StringIO()):
+                result = tls_config.run('example.com', check_ciphers=False)
+        self.capture.assert_called_once_with('example.com', 443)
+        self.assertIn('unable to get local issuer certificate', result['evidence'])
 
 
 if __name__ == "__main__":

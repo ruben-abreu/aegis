@@ -60,16 +60,18 @@ class SmtpStarttlsTests(unittest.TestCase):
             ports.check_smtp_starttls("mail.example", 25, evidence=evidence)
 
         transcript = "\n".join(evidence)
-        self.assertIn("SMTP greeting: 220", transcript)
-        self.assertIn("EHLO response: 250", transcript)
-        self.assertIn("STARTTLS capability advertised: yes", transcript)
+        self.assertIn("220", transcript)
+        self.assertIn("> EHLO aegis.local", transcript)
+        self.assertIn("250", transcript)
+        self.assertNotIn("STARTTLS capability advertised:", transcript)
 
     @patch("scanners.ports.test_port", return_value=True)
-    def test_port_run_returns_reproduction_and_socket_evidence(self, test_port):
+    def test_port_run_returns_socket_evidence_without_unexecuted_commands(self, test_port):
         with redirect_stdout(StringIO()):
             result = ports.run("example.com", port=443)
 
-        self.assertIn("nc -z -n -v", result["evidence"])
+        self.assertNotIn("$ nc", result["evidence"])
+        self.assertNotIn("CAPTURED BY AEGIS", result["evidence"])
         self.assertIn("Result: OPEN", result["evidence"])
 
 

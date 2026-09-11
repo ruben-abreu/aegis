@@ -103,10 +103,7 @@ class EmailSecurityTests(unittest.TestCase):
             evidence=[],
         )
         collect_mx.assert_called_once_with("example.com", [])
-        self.assertIn(
-            "dig s02._domainkey.example.com txt +short",
-            result["evidence"],
-        )
+        self.assertEqual(result['evidence'], '')  # Mocked queries did not capture records.
 
     def test_ip_target_is_rejected_without_dns_queries(self):
         output = StringIO()
@@ -127,9 +124,10 @@ class EmailSecurityTests(unittest.TestCase):
             email.check_spf("example.com", evidence=evidence)
 
         transcript = email.format_email_evidence("example.com", evidence)
-        self.assertIn("dig example.com txt +short", transcript)
+        self.assertIn(";; example.com IN TXT", transcript)
         self.assertIn('"v=spf1 -all"', transcript)
-        self.assertIn("dig example.com mx +short", transcript)
+        self.assertNotIn("IN MX", transcript)  # Do not imply an unexecuted query ran.
+        self.assertNotIn("CAPTURED BY AEGIS", transcript)
 
 
 if __name__ == "__main__":

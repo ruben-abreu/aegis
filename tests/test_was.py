@@ -101,7 +101,7 @@ class WebApplicationSecurityTests(unittest.TestCase):
 
         self.assertEqual(["redirect", "headers"], calls)
 
-    def test_http_evidence_contains_commands_status_and_headers(self):
+    def test_http_evidence_contains_status_and_headers_without_scaffolding(self):
         response = FakeResponse(
             headers={"Server": "example-edge", "X-Frame-Options": "DENY"},
             status_code=403,
@@ -109,7 +109,8 @@ class WebApplicationSecurityTests(unittest.TestCase):
 
         evidence = was.format_was_evidence(response, "https://example.com")
 
-        self.assertIn("curl -IL -k https://example.com", evidence)
+        self.assertNotIn("$ curl", evidence)
+        self.assertNotIn("CAPTURED BY AEGIS", evidence)
         self.assertIn("HTTP status: 403", evidence)
         self.assertIn("Server: example-edge", evidence)
 

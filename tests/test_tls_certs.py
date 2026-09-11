@@ -14,6 +14,15 @@ from scanners import tls_certs
 
 
 class CertificateScannerTests(unittest.TestCase):
+    def setUp(self):
+        capture = patch.object(tls_certs, 'capture_openssl_evidence', return_value=
+            '$ openssl s_client -connect example.com:443\n'
+            'verify error:num=18:self-signed certificate\n'
+            'notAfter=Oct 10 00:00:00 2026 GMT\n'
+            'DNS:example.com, DNS:*.example.org\n')
+        self.capture = capture.start()
+        self.addCleanup(capture.stop)
+
     @classmethod
     def setUpClass(cls):
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -180,16 +189,23 @@ class CertificateScannerTests(unittest.TestCase):
         self.assertIn("Entrust certificate distrusted", output.getvalue())
         self.assertNotIn("BitSight", output.getvalue())
 
-    def test_certificate_evidence_contains_reproduction_and_captured_fields(self):
-        evidence = tls_certs.format_certificate_evidence(
-            self.cert, "example.com", port=443, tls_version="TLSv1.3"
-        )
+    def test_certificate_evidence_uses_the_real_openssl_transcript(self):
+        with patch.object(tls_certs, 'get_certificate', return_value=(self.cert, 'TLSv1.3')):
+            with redirect_stdout(StringIO()):
+                evidence = tls_certs.run('example.com')['evidence']
 
         self.assertIn("openssl s_client -connect example.com:443", evidence)
-        self.assertIn("CAPTURED BY AEGIS", evidence)
-        self.assertIn("Negotiated protocol: TLSv1.3", evidence)
+        self.assertEqual(evidence, self.capture.return_value)
+        self.assertNotIn("CAPTURED BY AEGIS", evidence)
+        self.assertIn("verify error:num=18:self-signed certificate", evidence)
         self.assertIn("DNS:example.com", evidence)
         self.assertIn("DNS:*.example.org", evidence)
+
+    def test_unavailable_python_certificate_does_not_hide_openssl_errors(self):
+        with patch.object(tls_certs, 'get_certificate', return_value=(None, None)):
+            with redirect_stdout(StringIO()):
+                evidence = tls_certs.run('example.com')['evidence']
+        self.assertEqual(evidence, self.capture.return_value)
 
 
 if __name__ == "__main__":

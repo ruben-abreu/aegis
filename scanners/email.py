@@ -1,13 +1,12 @@
 import dns.resolver
 import base64
 import struct
-import shlex
 
 
 def _record_dns_evidence(evidence, name, record_type, records=None, error=None):
     if evidence is None:
         return
-    evidence.append(f"$ dig {name} {record_type.lower()} +short")
+    evidence.append(f";; {name} IN {record_type.upper()}")
     if records:
         evidence.extend(record.to_text() for record in records)
     elif error:
@@ -34,20 +33,8 @@ def split_dkim_target(target, dkim_selector=None):
 
 
 def format_email_evidence(domain, captured, dkim_selector=None):
-    quoted_domain = shlex.quote(str(domain))
-    selector = dkim_selector or "selector"
-    dkim_name = shlex.quote(f"{selector}._domainkey.{domain}")
-    lines = [
-        "REPRODUCE MANUALLY",
-        f"$ dig {quoted_domain} txt +short",
-        f"$ dig _dmarc.{quoted_domain} txt +short",
-        f"$ dig {dkim_name} txt +short",
-        f"$ dig {quoted_domain} mx +short",
-        "",
-        "CAPTURED BY AEGIS (DNS queries)",
-    ]
-    lines.extend(captured or ["No DNS evidence was captured."])
-    return "\n".join(lines).rstrip()
+    """Only queries actually performed and the DNS records/errors they returned."""
+    return "\n".join(captured).rstrip()
 
 
 def check_spf(domain, evidence=None):

@@ -2,31 +2,12 @@ import dns.resolver
 import urllib.request
 import json
 import os
-import shlex
 
 VT_API_KEY = os.getenv("VT_API_KEY")
 
 
 def format_dns_evidence(target, target_type, captured):
-    quoted_target = shlex.quote(str(target))
-    lines = ["REPRODUCE MANUALLY"]
-    if target_type == "Domain":
-        lines.extend(
-            (
-                f"$ dig {quoted_target} A +short",
-                f"$ dig {quoted_target} AAAA +short",
-                f"$ dig {quoted_target} NS +short",
-                f"$ dig {quoted_target} +dnssec +multi",
-            )
-        )
-    else:
-        lines.append(f"$ whois {quoted_target}")
-        lines.append(
-            "$ curl 'https://www.virustotal.com/api/v3/ip_addresses/"
-            f"{quoted_target}/resolutions?limit=40' -H 'x-apikey: <API_TOKEN>'"
-        )
-    lines.extend(("", "CAPTURED BY AEGIS", *(captured or ["No DNS evidence was captured."])))
-    return "\n".join(lines)
+    return "\n".join(captured)
 
 def run(target, target_type=None, port=None):
     evidence = []

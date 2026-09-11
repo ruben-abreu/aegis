@@ -1,6 +1,5 @@
 import socket
 import smtplib
-import shlex
 
 GREEN="\033[92m"; RED="\033[91m"; YELLOW="\033[93m"; BOLD="\033[1m"; END="\033[0m"
 
@@ -153,7 +152,7 @@ def check_smtp_starttls(host, port, timeout=7, evidence=None):
     try:
         greeting_code, greeting = smtp.connect(host, port)
         if evidence is not None:
-            evidence.append(f"SMTP greeting: {greeting_code} {_smtp_text(greeting)}")
+            evidence.append(f"{greeting_code} {_smtp_text(greeting)}")
         if greeting_code != 220:
             warn(
                 f"SMTP service returned greeting code {greeting_code}; "
@@ -164,7 +163,7 @@ def check_smtp_starttls(host, port, timeout=7, evidence=None):
         print(f"    Banner: {_smtp_text(greeting)}")
         ehlo_code, ehlo_response = smtp.ehlo("aegis.local")
         if evidence is not None:
-            evidence.append(f"EHLO response: {ehlo_code} {_smtp_text(ehlo_response)}")
+            evidence.extend(("> EHLO aegis.local", f"{ehlo_code} {_smtp_text(ehlo_response)}"))
         if ehlo_code != 250:
             warn(
                 f"SMTP EHLO returned code {ehlo_code}; STARTTLS support "
@@ -173,13 +172,9 @@ def check_smtp_starttls(host, port, timeout=7, evidence=None):
             return None
 
         if smtp.has_extn("starttls"):
-            if evidence is not None:
-                evidence.append("STARTTLS capability advertised: yes")
             ok(f"STARTTLS advertised on port {port}")
             return True
 
-        if evidence is not None:
-            evidence.append("STARTTLS capability advertised: no")
         bad(
             f"STARTTLS NOT advertised on port {port}; SMTP transport is "
             "plaintext-only"
@@ -203,41 +198,14 @@ def check_smtp_starttls(host, port, timeout=7, evidence=None):
 def format_port_evidence(
     target, port, protocol, is_open, service=None, category=None, smtp_evidence=None
 ):
-    """Return the socket result and team reference commands for this service."""
-    host = shlex.quote(str(target))
-    udp_flag = " -u" if protocol == "udp" else ""
-    nmap_scan = "-sU " if protocol == "udp" else ""
-    lines = [
-        "REPRODUCE MANUALLY",
-        f"$ nc -z -n -v{udp_flag} {host} {port}",
-        f"$ nmap {nmap_scan}-Pn -p {port} {host}",
-    ]
-
-    starttls_protocol = STARTTLS_PROTOCOLS.get(port)
-    if starttls_protocol:
-        lines.append(
-            f"$ openssl s_client -starttls {starttls_protocol} -connect {host}:{port}"
-        )
-    elif port in IMPLICIT_TLS_PORTS:
-        lines.append(f"$ openssl s_client -connect {host}:{port}")
-
-    lines.extend(
-        (
-            "",
-            "CAPTURED BY AEGIS (socket probe)",
-            f"Endpoint: {target}:{port}/{protocol}",
-            f"Service: {service or 'unknown'}",
-            f"Category: {category or 'unknown'}",
-        )
-    )
+    """Socket observations and decoded SMTP replies; no unexecuted reference commands."""
+    lines = [f"{target}:{port}/{protocol}", f"Service: {service or 'unknown'}"]
     if protocol == "udp" and is_open:
         lines.append("Result: OPEN or filtered (no UDP rejection received)")
     else:
         lines.append(f"Result: {'OPEN' if is_open else 'CLOSED or filtered'}")
-
     if smtp_evidence:
-        lines.extend(("", "SMTP EHLO TRANSCRIPT", *smtp_evidence))
-
+        lines.extend(("", *smtp_evidence))
     return "\n".join(lines)
 
 def run(target, target_type=None, port=None):

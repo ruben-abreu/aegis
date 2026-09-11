@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from datetime import date
 from html.parser import HTMLParser
 import re
-import shlex
 import socket
 from typing import Optional
 
@@ -594,45 +593,18 @@ def _print_assessment(fingerprint, assessment):
 def format_server_software_evidence(
     target, port, response=None, errors=None, banner="", banner_error=None
 ):
-    """Return the headers/banner used for fingerprinting and reference commands."""
-    host = shlex.quote(str(target))
-    lines = [
-        "REPRODUCE MANUALLY",
-        f"$ nmap -sV --script=http-headers -Pn -p {port} {host}",
-    ]
-
-    if port not in NON_HTTP_PORTS:
-        scheme = "https" if port in HTTPS_LIKELY_PORTS else "http"
-        default_port = 443 if scheme == "https" else 80
-        authority = target if port == default_port else f"{target}:{port}"
-        lines.append(f"$ curl -IL -k {shlex.quote(f'{scheme}://{authority}')}")
-    if port in BANNER_PORTS:
-        lines.append(f"$ nc -n -v {host} {port}")
-
-    lines.extend(("", "CAPTURED BY AEGIS (passive fingerprinting)"))
+    """Return the actual response headers, banner or errors without report scaffolding."""
+    lines = [f"{target}:{port}"]
     if response is not None:
-        lines.extend(
-            (
-                f"HTTP endpoint: {response.url}",
-                f"HTTP status: {response.status_code}",
-                "",
-                "HTTP RESPONSE HEADERS",
-            )
-        )
-        for name, value in sorted(response.headers.items(), key=lambda item: item[0].lower()):
+        lines.extend((response.url, f"HTTP status: {response.status_code}"))
+        for name, value in response.headers.items():
             lines.append(f"{name}: {value}")
     elif errors:
-        lines.append("HTTP probe errors:")
-        lines.extend(f"- {error}" for error in errors)
-
+        lines.extend(str(error) for error in errors)
     if banner:
-        lines.extend(("", "SERVICE BANNER", banner))
+        lines.extend(("", banner))
     elif banner_error:
-        lines.extend(("", f"Service banner error: {banner_error}"))
-
-    if response is None and not errors and not banner and not banner_error:
-        lines.append("No passive HTTP or service-banner probe applies to this port.")
-
+        lines.extend(("", str(banner_error)))
     return "\n".join(lines)
 
 

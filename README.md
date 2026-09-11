@@ -85,6 +85,8 @@ VirusTotal and filters out ISP and dynamic-hostname noise. Requires an API key.
 ## Requirements
 
 - Python 3.9 or newer
+- `openssl` — used for native SSL/TLS technical evidence; the assessment still
+  runs if it is unavailable, with an explicit command error in the evidence
 - [`sslscan`](https://github.com/rbsec/sslscan) — needed by the optional extended
   SSL/TLS Configuration checks, since Python's `ssl` module refuses to negotiate
   the deprecated protocol versions we specifically want to detect
@@ -140,12 +142,21 @@ Scan results can be exported for sharing from the results panel:
   section and a severity (`pass`, `fail`, `warning`, `info`, `detail`), and a
   severity count. Finding text is never reworded.
 
-Every web scanner includes a separate Technical Evidence pane. It shows the
-team-reference commands that can reproduce the diagnosis beside the data Aegis
-actually captured: certificate fields, TLS handshakes and raw `sslscan` output,
-HTTP redirects and headers, socket results and SMTP transcripts, DNS email
-records, or software headers and service banners. The same evidence is included
-in TXT and JSON exports.
+Every web scanner includes a separate Technical Evidence pane. SSL/TLS scans
+show real `openssl s_client` output, including certificate verification errors
+from stderr, followed by `openssl x509` output for the certificate returned by
+that connection. Extended configuration scans also include the executed
+`sslscan` output. Commands have bounded timeouts; partial output is retained.
+
+Other scanners show the actual HTTP headers, DNS records, socket observations,
+decoded SMTP replies and service banners collected by their Python probes.
+They are not presented as output from unexecuted curl, dig or nmap commands.
+The same evidence is included in TXT and JSON exports. Existing history is not
+rewritten; run a new scan to collect the new native SSL/TLS transcript.
+
+OpenSSL uses its own local trust store, which may differ from the Python trust
+store used by the assessment. A verification error is shown only when the
+command actually returns it.
 
 Both are also reachable directly:
 

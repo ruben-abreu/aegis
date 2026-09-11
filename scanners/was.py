@@ -4,7 +4,6 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import re
-import shlex
 from urllib.parse import urlparse
 
 GREEN="\033[92m"; RED="\033[91m"; YELLOW="\033[93m"; BOLD="\033[1m"; END="\033[0m"
@@ -23,46 +22,23 @@ HEADERS=[
 ]
 
 
-def format_was_evidence(response, requested_url):
-    """Format the HTTP transcript captured by Aegis plus team reference commands."""
-    quoted_url = shlex.quote(requested_url)
-    lines = [
-        "REPRODUCE MANUALLY",
-        f"$ curl -IL -k {quoted_url}",
-        f"$ wget -S --spider {quoted_url}",
-        "",
-        "CAPTURED BY AEGIS (HTTP request)",
-        f"Requested URL: {requested_url}",
-    ]
-
+def format_was_evidence(response, requested_url, errors=None):
+    """Show the actual HTTP exchanges, not output attributed to unexecuted tools."""
     if response is None:
-        lines.append("No HTTP response was captured.")
-        return "\n".join(lines)
-
-    request = getattr(response, "request", None)
-    if request is not None:
-        lines.append(f"Request: {getattr(request, 'method', 'GET')} {request.url}")
-        request_headers = getattr(request, "headers", {})
-        for name, value in request_headers.items():
+        return '\n'.join(errors or [f"{requested_url}\n# No HTTP response returned."])
+    lines = list(errors or [])
+    for item in [*getattr(response, "history", []), response]:
+        request = getattr(item, "request", None)
+        lines.append(f"> {getattr(request, 'method', 'GET')} {item.url}")
+        for name, value in getattr(request, "headers", {}).items():
             lines.append(f"> {name}: {value}")
+        lines.append(f"< HTTP status: {item.status_code}")
+        for name, value in item.headers.items():
+            lines.append(f"< {name}: {value}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
 
-    lines.extend(("", "REDIRECT CHAIN"))
-    chain = [*getattr(response, "history", []), response]
-    for item in chain:
-        location = item.headers.get("Location")
-        line = f"{item.status_code} {item.url}"
-        if location:
-            line += f" -> {location}"
-        lines.append(line)
-
-    lines.extend(("", "FINAL RESPONSE HEADERS"))
-    lines.append(f"HTTP status: {response.status_code}")
-    for name, value in sorted(response.headers.items(), key=lambda item: item[0].lower()):
-        lines.append(f"{name}: {value}")
-
-    return "\n".join(lines)
-
-def fetch(url):
+def fetch(url, errors=None):
     try:
         return requests.get(
             url,
@@ -74,6 +50,8 @@ def fetch(url):
             },
         )
     except requests.exceptions.RequestException as e:
+        if errors is not None:
+            errors.append(f'{url}\n{e}')
         print(f"[!] Connection failed: {e}")
         return None
 
@@ -403,16 +381,17 @@ def run(target, port=443):
     print("=" * 40)
 
     requested_url = primary_url
-    r = fetch(requested_url)
+    errors = []
+    r = fetch(requested_url, errors=errors)
 
     if r is None:
         print(f"[*] Primary connection failed, trying {fallback_url}...")
         requested_url = fallback_url
-        r = fetch(requested_url)
+        r = fetch(requested_url, errors=errors)
 
     if r is None:
         bad("Unable to connect to the target.")
-        return {"evidence": format_was_evidence(None, requested_url)}
+        return {"evidence": format_was_evidence(None, requested_url, errors=errors)}
 
     print(f"\n[+] Connected successfully")
     print(f"Resolved URL: {r.url}")
@@ -433,4 +412,4 @@ def run(target, port=443):
     check_js(r)
     check_sri(r)
     #fingerprint(r)
-    return {"evidence": format_was_evidence(r, requested_url)}
+    return {"evidence": format_was_evidence(r, requested_url, errors=errors)}
