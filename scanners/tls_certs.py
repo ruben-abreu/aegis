@@ -1,5 +1,3 @@
-import ssl
-import socket
 from datetime import datetime, timezone
 from cryptography import x509
 from cryptography.x509.oid import NameOID, ExtensionOID
@@ -9,10 +7,10 @@ import urllib3
 
 try:
     from .hostnames import get_cert_identities
-    from .terminal import capture_openssl_evidence
+    from .terminal import capture_openssl_handshake
 except ImportError:  # run directly rather than as part of the package
     from hostnames import get_cert_identities
-    from terminal import capture_openssl_evidence
+    from terminal import capture_openssl_handshake
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -29,19 +27,11 @@ MAX_SAN_ENTRIES = 25
 
 
 def get_certificate(host, port=443):
-    try:
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-
-        with socket.create_connection((host, port), timeout=10) as sock:
-            with context.wrap_socket(sock, server_hostname=host) as ssock:
-                der_cert = ssock.getpeercert(binary_form=True)
-                cert = x509.load_der_x509_certificate(der_cert)
-                return cert, ssock.version()
-    except Exception as e:
-        print(f"{RED}[!] Unable to retrieve certificate: {e}{END}")
+    handshake = capture_openssl_handshake(host, port)
+    if handshake.get('error'):
+        print(f"{RED}[!] Unable to retrieve certificate: {handshake['error']}{END}")
         return None, None
+    return x509.load_der_x509_certificate(handshake['certificate_der']), handshake['protocol']
 
 def cert_validity_dates(cert):
     """Returns (not_before, not_after) as timezone-aware UTC datetimes.
@@ -344,12 +334,15 @@ def run(target, target_type=None, port=443):
     print(f" Port: {port}")
     print("=" * 40)
 
-    cert, tls_version = get_certificate(target, port)
-    evidence = capture_openssl_evidence(target, port)
+    handshake = capture_openssl_handshake(target, port)
+    evidence = handshake['evidence']
 
-    if cert is None:
-        bad("Unable to retrieve certificate from target")
+    if handshake.get('error'):
+        bad("TLS handshake failed; certificate assessment unavailable. See Technical Evidence.")
         return {"evidence": evidence}
+
+    cert = x509.load_der_x509_certificate(handshake['certificate_der'])
+    tls_version = handshake['protocol']
 
     print(f"\n[+] Certificate retrieved successfully")
     if tls_version:

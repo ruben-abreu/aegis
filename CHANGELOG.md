@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fixed inconsistent SSL/TLS assessment and evidence by deriving the certificate,
+  negotiated connection properties and trust result from a single OpenSSL handshake.
+- IP targets no longer send their address as SNI. Failed handshakes or unavailable
+  OpenSSL report assessment as unavailable instead of using a separate connection.
 - Technical Evidence now omits report headings and unexecuted reference commands
   across all risk vectors.
 - SSL/TLS evidence contains native OpenSSL handshake and certificate output,

@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
@@ -15,11 +16,13 @@ from scanners import tls_certs
 
 class CertificateScannerTests(unittest.TestCase):
     def setUp(self):
-        capture = patch.object(tls_certs, 'capture_openssl_evidence', return_value=
+        capture = patch.object(tls_certs, 'capture_openssl_handshake', return_value={
+            'error': None, 'certificate_der': self.cert.public_bytes(Encoding.DER),
+            'protocol': 'TLSv1.3', 'evidence':
             '$ openssl s_client -connect example.com:443\n'
             'verify error:num=18:self-signed certificate\n'
             'notAfter=Oct 10 00:00:00 2026 GMT\n'
-            'DNS:example.com, DNS:*.example.org\n')
+            'DNS:example.com, DNS:*.example.org\n'})
         self.capture = capture.start()
         self.addCleanup(capture.stop)
 
@@ -195,17 +198,24 @@ class CertificateScannerTests(unittest.TestCase):
                 evidence = tls_certs.run('example.com')['evidence']
 
         self.assertIn("openssl s_client -connect example.com:443", evidence)
-        self.assertEqual(evidence, self.capture.return_value)
+        self.assertEqual(evidence, self.capture.return_value['evidence'])
+        self.capture.assert_called_once_with('example.com', 443)
         self.assertNotIn("CAPTURED BY AEGIS", evidence)
         self.assertIn("verify error:num=18:self-signed certificate", evidence)
         self.assertIn("DNS:example.com", evidence)
         self.assertIn("DNS:*.example.org", evidence)
 
-    def test_unavailable_python_certificate_does_not_hide_openssl_errors(self):
-        with patch.object(tls_certs, 'get_certificate', return_value=(None, None)):
-            with redirect_stdout(StringIO()):
-                evidence = tls_certs.run('example.com')['evidence']
-        self.assertEqual(evidence, self.capture.return_value)
+    def test_failed_handshake_cannot_produce_certificate_findings(self):
+        self.capture.return_value = {'error': 'No peer certificate', 'evidence':
+            'no peer certificate available\nVerify return code: 0 (ok)\n'}
+        output = StringIO()
+        with redirect_stdout(output), patch.object(tls_certs, 'get_certificate') as other_connection:
+            evidence = tls_certs.run('example.com')['evidence']
+        self.assertEqual(evidence, self.capture.return_value['evidence'])
+        self.assertIn('assessment unavailable', output.getvalue())
+        self.assertNotIn('retrieved successfully', output.getvalue())
+        self.assertNotIn('CERTIFICATE FINDINGS', output.getvalue())
+        other_connection.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -36,7 +36,7 @@ overlong certificates, malformed certificates and public keys, chain/trust
 failures, weak DSA or elliptic-curve keys, export ciphers, short or commonly
 reused Diffie-Hellman parameters, Heartbleed, and deprecated SSL/TLS versions
 including SSLv2, SSLv3, TLS 1.0 and TLS 1.1. The chain is validated with the
-local platform trust store.
+local OpenSSL trust store, using the same handshake shown in Technical Evidence.
 
 Additional checks cover the active cipher, forward secrecy, HSTS (including
 `max-age`, `includeSubDomains` and `preload`), TLS compression, session
@@ -85,8 +85,9 @@ VirusTotal and filters out ISP and dynamic-hostname noise. Requires an API key.
 ## Requirements
 
 - Python 3.9 or newer
-- `openssl` — used for native SSL/TLS technical evidence; the assessment still
-  runs if it is unavailable, with an explicit command error in the evidence
+- `openssl` — required for SSL/TLS assessments and their native technical evidence.
+  If unavailable, the scan reports that assessment is unavailable and preserves
+  the command error; it does not silently assess a different connection.
 - [`sslscan`](https://github.com/rbsec/sslscan) — needed by the optional extended
   SSL/TLS Configuration checks, since Python's `ssl` module refuses to negotiate
   the deprecated protocol versions we specifically want to detect
@@ -154,9 +155,12 @@ They are not presented as output from unexecuted curl, dig or nmap commands.
 The same evidence is included in TXT and JSON exports. Existing history is not
 rewritten; run a new scan to collect the new native SSL/TLS transcript.
 
-OpenSSL uses its own local trust store, which may differ from the Python trust
-store used by the assessment. A verification error is shown only when the
-command actually returns it.
+SSL/TLS certificate and baseline configuration findings use the certificate,
+negotiated protocol and verification result from that same OpenSSL connection.
+IP targets do not send an IP address as SNI. A failed handshake cannot produce
+successful certificate findings, even if OpenSSL prints `Verify return code: 0`.
+HSTS and optional sslscan checks remain separate protocol-specific probes.
+Verification errors are shown only when the command actually returns them.
 
 Both are also reachable directly:
 

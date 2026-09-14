@@ -13,15 +13,16 @@ from scanners import tls_config
 class TlsConfigurationTests(unittest.TestCase):
     def setUp(self):
         tls_config.reset_sslscan_cache()
-        capture = patch.object(tls_config, 'capture_openssl_evidence', return_value=
-            '$ openssl s_client -connect example.com:443 -servername example.com -showcerts </dev/null\n'
-            'verify error:num=20:unable to get local issuer certificate\n')
+        capture = patch.object(tls_config, 'capture_openssl_handshake', return_value=self._handshake())
         self.capture = capture.start()
         self.addCleanup(capture.stop)
 
     @staticmethod
     def _handshake():
         return {
+            "error": None,
+            "evidence": '$ openssl s_client -connect example.com:443 -servername example.com -showcerts </dev/null\n'
+                        'verify error:num=20:unable to get local issuer certificate\n',
             "protocol": "TLSv1.3",
             "cipher": "TLS_AES_256_GCM_SHA384",
             "cipher_protocol": "TLSv1.3",
@@ -260,7 +261,7 @@ class TlsConfigurationTests(unittest.TestCase):
         versions.assert_not_called()
 
     def test_configuration_evidence_preserves_openssl_errors_and_raw_sslscan(self):
-        raw = self.capture.return_value
+        raw = self.capture.return_value['evidence']
         evidence = tls_config.format_tls_config_evidence(
             "example.com",
             port=443,
@@ -277,15 +278,36 @@ class TlsConfigurationTests(unittest.TestCase):
         self.assertIn("TLSv1.0 disabled", evidence)
 
     def test_skipped_extended_checks_do_not_add_fake_sslscan_output(self):
-        raw = self.capture.return_value
+        raw = self.capture.return_value['evidence']
         self.assertEqual(tls_config.format_tls_config_evidence('example.com', openssl_raw=raw), raw)
 
-    def test_python_handshake_failure_still_collects_native_openssl_errors(self):
-        with patch.object(tls_config, 'capture_tls_handshake', side_effect=OSError('failed')):
-            with redirect_stdout(StringIO()):
-                result = tls_config.run('example.com', check_ciphers=False)
+    def test_failed_handshake_does_not_assess_a_different_connection(self):
+        self.capture.return_value = {'error': 'No peer certificate', 'evidence':
+            'no peer certificate available\nVerify return code: 0 (ok)\n'}
+        output = StringIO()
+        with redirect_stdout(output), patch.object(tls_config, 'check_certificate_chain') as chain:
+            result = tls_config.run('example.com', check_ciphers=False)
         self.capture.assert_called_once_with('example.com', 443)
-        self.assertIn('unable to get local issuer certificate', result['evidence'])
+        self.assertEqual(result['evidence'], self.capture.return_value['evidence'])
+        self.assertIn('assessment unavailable', output.getvalue())
+        self.assertNotIn('Connection successful', output.getvalue())
+        chain.assert_not_called()
+
+    def test_baseline_checks_reuse_the_supplied_handshake_without_network(self):
+        handshake = dict(self._handshake(), verify_code=20,
+                         verify_message='unable to get local issuer certificate',
+                         compression='NONE', secure_renegotiation=True)
+        with redirect_stdout(StringIO()) as output:
+            self.assertFalse(tls_config.check_certificate_chain('example.com', handshake=handshake))
+            self.assertTrue(tls_config.check_forward_secrecy('example.com', handshake=handshake))
+            self.assertTrue(tls_config.check_ssl_compression('example.com', handshake=handshake))
+            self.assertTrue(tls_config.check_session_resumption('example.com', handshake=handshake))
+            self.assertTrue(tls_config.check_secure_renegotiation('example.com', handshake=handshake))
+            self.assertTrue(tls_config.check_protocol_downgrade_protection('example.com', handshake=handshake))
+            self.assertTrue(tls_config.check_cipher_suites('example.com', handshake=handshake))
+        self.capture.assert_not_called()
+        self.assertIn('unable to get local issuer certificate', output.getvalue())
+        self.assertNotIn('chain reaches a trusted root', output.getvalue())
 
 
 if __name__ == "__main__":

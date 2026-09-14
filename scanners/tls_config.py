@@ -1,5 +1,3 @@
-import ssl
-import socket
 import requests
 import subprocess
 import shlex
@@ -11,10 +9,10 @@ from cryptography.hazmat.primitives.asymmetric import dsa, ec
 
 try:
     from .hostnames import first_match, get_cert_identities, hostname_matches
-    from .terminal import capture_openssl_evidence
+    from .terminal import capture_openssl_handshake
 except ImportError:  # run directly rather than as part of the package
     from hostnames import first_match, get_cert_identities, hostname_matches
-    from terminal import capture_openssl_evidence
+    from terminal import capture_openssl_handshake
 
 _sslscan_cache = {}
 
@@ -63,24 +61,16 @@ STRONG_CIPHERS = [
 
 
 def capture_tls_handshake(host, port=443):
-    """Capture the negotiated values used as raw evidence in the web UI."""
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
+    """The baseline assessment and transcript share a single OpenSSL handshake."""
+    return capture_openssl_handshake(host, port)
 
-    with socket.create_connection((host, port), timeout=10) as sock:
-        with context.wrap_socket(sock, server_hostname=host) as ssock:
-            cipher = ssock.cipher() or ("Unknown", "Unknown", 0)
-            session = getattr(ssock, "session", None)
-            return {
-                "protocol": ssock.version() or "Unknown",
-                "cipher": cipher[0],
-                "cipher_protocol": cipher[1],
-                "cipher_bits": cipher[2],
-                "compression": ssock.compression() or "None",
-                "session_ticket": bool(session and session.has_ticket),
-                "certificate_der": ssock.getpeercert(binary_form=True),
-            }
+
+def _checked_handshake(host, port, handshake):
+    if handshake is None:
+        handshake = capture_tls_handshake(host, port)
+    if handshake.get('error'):
+        raise ValueError(handshake['error'])
+    return handshake
 
 
 def _certificate_from_handshake(handshake):
@@ -234,24 +224,23 @@ def check_configuration_public_key(cert):
     return True
 
 
-def check_certificate_chain(host, port=443):
-    """Use the platform trust store to identify chain or trust-anchor failures."""
+def check_certificate_chain(host, port=443, handshake=None):
+    """Use verification from the same connection, with OpenSSL's trust store."""
     print("\n[*] Certificate Chain and Trust")
-    context = ssl.create_default_context()
-    context.check_hostname = False
-
     try:
-        with socket.create_connection((host, port), timeout=10) as sock:
-            with context.wrap_socket(sock, server_hostname=host):
-                ok("Certificate chain reaches a trusted root")
-                return True
-    except ssl.SSLCertVerificationError as exc:
-        warn("Missing intermediate certificates or untrusted root anchor")
-        print(f"    Verification detail: {exc.verify_message}")
-        return False
-    except (OSError, ssl.SSLError, TimeoutError) as exc:
+        handshake = _checked_handshake(host, port, handshake)
+        code = handshake.get('verify_code')
+        if code == 0:
+            ok("Certificate chain reaches a trusted root")
+            return True
+        if code is None:
+            warn("Certificate chain verification result unavailable")
+        else:
+            warn("Certificate verification failed")
+            print(f"    Verification detail: {handshake.get('verify_message')} (code {code})")
+    except ValueError as exc:
         warn(f"Unable to verify the certificate chain: {exc}")
-        return False
+    return False
 
 
 def format_tls_config_evidence(host, port=443, openssl_raw="", sslscan_raw=None):
@@ -319,41 +308,25 @@ def check_tls_versions(host, port=443):
     else:
         ok("Only modern TLS versions supported (1.2+)")
 
-def check_cipher_suites(host, port=443):
+def check_cipher_suites(host, port=443, handshake=None):
     print("\n[*] Cipher Suite Analysis")
-
     try:
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-
-        with socket.create_connection((host, port), timeout=10) as sock:
-            with context.wrap_socket(sock, server_hostname=host) as ssock:
-                cipher = ssock.cipher()
-                cipher_name = cipher[0] if cipher else "Unknown"
-                cipher_version = cipher[1] if len(cipher) > 1 else "Unknown"
-
-                print(f"    Active Cipher: {cipher_name}")
-                print(f"    Protocol: {cipher_version}")
-
-                is_strong = any(strong in cipher_name for strong in STRONG_CIPHERS)
-                is_weak = any(weak in cipher_name.upper() for weak in WEAK_CIPHERS)
-
-                if is_weak:
-                    bad(f"Weak cipher detected: {cipher_name}")
-                    return False
-                elif is_strong:
-                    ok(f"Strong cipher in use: {cipher_name}")
-                    return True
-                elif "GCM" in cipher_name or "POLY1305" in cipher_name or "ChaCha" in cipher_name:
-                    ok(f"Modern AEAD cipher: {cipher_name}")
-                    return True
-                else:
-                    warn(f"Cipher strength unclear: {cipher_name}")
-                    return True
-
-    except Exception as e:
-        warn(f"Unable to analyze cipher suite: {e}")
+        handshake = _checked_handshake(host, port, handshake)
+        cipher_name = handshake["cipher"]
+        print(f"    Active Cipher: {cipher_name}")
+        print(f"    Protocol: {handshake['protocol']}")
+        if any(weak in cipher_name.upper() for weak in WEAK_CIPHERS):
+            bad(f"Weak cipher detected: {cipher_name}")
+            return False
+        if any(strong in cipher_name for strong in STRONG_CIPHERS):
+            ok(f"Strong cipher in use: {cipher_name}")
+        elif any(token in cipher_name.upper() for token in ("GCM", "POLY1305", "CHACHA")):
+            ok(f"Modern AEAD cipher: {cipher_name}")
+        else:
+            warn(f"Cipher strength unclear: {cipher_name}")
+        return True
+    except ValueError as exc:
+        warn(f"Unable to analyze cipher suite: {exc}")
         return False
 
 def check_hsts_header(host, port=443):
@@ -403,128 +376,89 @@ def check_hsts_header(host, port=443):
         warn(f"Unable to check HSTS header: {e}")
         return False
 
-def check_ssl_compression(host, port=443):
+def check_ssl_compression(host, port=443, handshake=None):
     print("\n[*] SSL/TLS Compression")
-
     try:
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-
-        with socket.create_connection((host, port), timeout=10) as sock:
-            with context.wrap_socket(sock, server_hostname=host) as ssock:
-                compression = ssock.compression()
-
-                if compression:
-                    bad(f"TLS compression enabled ({compression}) - Vulnerable to CRIME attack")
-                    return False
-                else:
-                    ok("TLS compression disabled")
-                    return True
-
-    except Exception as e:
-        warn(f"Unable to determine compression status: {e}")
+        compression = _checked_handshake(host, port, handshake).get("compression")
+        if compression is None:
+            warn("Compression status unavailable")
+            return False
+        if compression.upper() != "NONE":
+            bad(f"TLS compression enabled ({compression}) - Vulnerable to CRIME attack")
+            return False
+        ok("TLS compression disabled")
+        return True
+    except ValueError as exc:
+        warn(f"Unable to determine compression status: {exc}")
         return False
 
-def check_session_resumption(host, port=443):
+def check_session_resumption(host, port=443, handshake=None):
     print("\n[*] Session Resumption")
-
     try:
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-
-        with socket.create_connection((host, port), timeout=10) as sock:
-            with context.wrap_socket(sock, server_hostname=host) as ssock:
-                session = ssock.session
-
-                if session and session.has_ticket:
-                    ok("Session resumption (tickets) supported")
-                    return True
-                elif session:
-                    ok("Session resumption (cache) supported")
-                    return True
-                else:
-                    warn("Session resumption not detected")
-                    return False
-
-    except Exception as e:
-        warn(f"Unable to check session resumption: {e}")
+        handshake = _checked_handshake(host, port, handshake)
+        if handshake.get("session_ticket"):
+            ok("Session ticket advertised (resumption not tested)")
+            return True
+        if handshake.get("session_id"):
+            ok("Session ID issued (resumption not tested)")
+            return True
+        warn("Session resumption not established by this handshake")
+        return False
+    except ValueError as exc:
+        warn(f"Unable to check session resumption: {exc}")
         return False
 
-def check_forward_secrecy(host, port=443):
+def check_forward_secrecy(host, port=443, handshake=None):
     print("\n[*] Forward Secrecy (Perfect Forward Secrecy)")
-
     try:
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-
-        with socket.create_connection((host, port), timeout=10) as sock:
-            with context.wrap_socket(sock, server_hostname=host) as ssock:
-                protocol_version = ssock.version()
-                cipher = ssock.cipher()
-                cipher_name = cipher[0] if cipher else ""
-
-                if "1.3" in protocol_version or "TLS_AES" in cipher_name:
-                    ok(f"Forward Secrecy inherent in TLSv1.3: {cipher_name}")
-                    return True
-                elif "ECDHE" in cipher_name or "DHE" in cipher_name:
-                    ok(f"Forward Secrecy enabled: {cipher_name}")
-                    return True
-                else:
-                    bad(f"Forward Secrecy NOT detected: {cipher_name}")
-                    return False
-
-    except Exception as e:
-        warn(f"Unable to check forward secrecy: {e}")
+        handshake = _checked_handshake(host, port, handshake)
+        cipher_name = handshake["cipher"]
+        if handshake["protocol"] == "TLSv1.3":
+            ok(f"Forward Secrecy inherent in TLSv1.3: {cipher_name}")
+            return True
+        if "ECDHE" in cipher_name or "DHE" in cipher_name:
+            ok(f"Forward Secrecy enabled: {cipher_name}")
+            return True
+        bad(f"Forward Secrecy NOT detected: {cipher_name}")
+        return False
+    except ValueError as exc:
+        warn(f"Unable to check forward secrecy: {exc}")
         return False
 
-def check_secure_renegotiation(host, port=443):
+def check_secure_renegotiation(host, port=443, handshake=None):
     print("\n[*] Secure Renegotiation")
-
     try:
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-
-        with socket.create_connection((host, port), timeout=10) as sock:
-            with context.wrap_socket(sock, server_hostname=host) as ssock:
-                if hasattr(ssock, 'verify_client_post_handshake'):
-                    ok("Secure renegotiation extension supported")
-                    return True
-                else:
-                    warn("Unable to verify secure renegotiation support")
-                    return False
-
-    except Exception as e:
-        warn(f"Unable to check renegotiation: {e}")
+        handshake = _checked_handshake(host, port, handshake)
+        if handshake["protocol"] == "TLSv1.3":
+            ok("Not applicable: TLSv1.3 does not use renegotiation")
+            return True
+        supported = handshake.get("secure_renegotiation")
+        if supported is True:
+            ok("Secure renegotiation extension supported")
+            return True
+        if supported is False:
+            warn("Secure renegotiation extension not supported")
+        else:
+            warn("Unable to verify secure renegotiation support")
+        return False
+    except ValueError as exc:
+        warn(f"Unable to check renegotiation: {exc}")
         return False
 
-def check_protocol_downgrade_protection(host, port=443):
+def check_protocol_downgrade_protection(host, port=443, handshake=None):
     print("\n[*] Protocol Downgrade Protection")
-
     try:
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-
-        with socket.create_connection((host, port), timeout=10) as sock:
-            with context.wrap_socket(sock, server_hostname=host) as ssock:
-                protocol_version = ssock.version()
-
-                if protocol_version == "TLSv1.3":
-                    ok("TLSv1.3 enforces best security practices")
-                    return True
-                elif protocol_version == "TLSv1.2":
-                    ok("TLSv1.2 - Good, but TLSv1.3 preferred")
-                    return True
-                else:
-                    warn(f"Using {protocol_version} - Consider upgrading to TLSv1.3")
-                    return False
-
-    except Exception as e:
-        warn(f"Unable to check protocol version: {e}")
+        protocol_version = _checked_handshake(host, port, handshake)["protocol"]
+        if protocol_version == "TLSv1.3":
+            ok("TLSv1.3 negotiated; active downgrade resistance not tested")
+            return True
+        if protocol_version == "TLSv1.2":
+            ok("TLSv1.2 negotiated; TLSv1.3 preferred. Active downgrade resistance not tested")
+            return True
+        warn(f"Using {protocol_version} - Consider upgrading to TLSv1.3")
+        return False
+    except ValueError as exc:
+        warn(f"Unable to check protocol version: {exc}")
         return False
 
 
@@ -690,18 +624,13 @@ def run(target, target_type=None, port=443, check_ciphers=None, interactive=True
     print(f" Port: {port}")
     print("=" * 40)
 
-    try:
-        handshake = capture_tls_handshake(target, port)
-    except (OSError, ssl.SSLError, TimeoutError) as exc:
-        bad(f"Unable to connect to {target}:{port}")
-        return {
-            "evidence": format_tls_config_evidence(
-                target, port=port, openssl_raw=capture_openssl_evidence(target, port)
-            )
-        }
+    handshake = capture_tls_handshake(target, port)
+    openssl_raw = handshake['evidence']
+    if handshake.get('error'):
+        bad("TLS handshake failed; configuration assessment unavailable. See Technical Evidence.")
+        return {"evidence": openssl_raw}
 
     print(f"\n[+] Connection successful")
-    openssl_raw = capture_openssl_evidence(target, port)
 
     # Fresh sslscan data per run. The cache is only populated if the user opts
     # into the extended checks at the end of the scan.
@@ -714,22 +643,22 @@ def run(target, target_type=None, port=443, check_ciphers=None, interactive=True
     check_certificate_timing(certificate)
     check_certificate_structure(certificate)
     check_configuration_public_key(certificate)
-    check_certificate_chain(target, port)
+    check_certificate_chain(target, port, handshake=handshake)
 
     print("\n[+] ADDITIONAL SECURITY CHECKS")
-    check_forward_secrecy(target, port)
+    check_forward_secrecy(target, port, handshake=handshake)
     check_hsts_header(target, port)
-    check_ssl_compression(target, port)
-    check_session_resumption(target, port)
-    check_secure_renegotiation(target, port)
-    check_protocol_downgrade_protection(target, port)
+    check_ssl_compression(target, port, handshake=handshake)
+    check_session_resumption(target, port, handshake=handshake)
+    check_secure_renegotiation(target, port, handshake=handshake)
+    check_protocol_downgrade_protection(target, port, handshake=handshake)
 
     print("\n[*] Optional Extended Scan")
     run_extended = should_check_ciphers(check_ciphers, interactive)
     if run_extended:
         print("    Running sslscan checks; this may take up to a minute...")
         print("\n[+] OPTIONAL ADDITIONAL CIPHER CONTEXT")
-        check_cipher_suites(target, port)
+        check_cipher_suites(target, port, handshake=handshake)
 
         print("\n[+] OPTIONAL EXTENDED FINDINGS")
         check_export_ciphers(target, port)
